@@ -487,3 +487,6 @@ $RECYCLE.BIN/
 !.env.example
 appsettings.Development.json
 **/appsettings.Development.json
+
+# Kiro IDE workspace files (local only, never commit)
+.kiro/
