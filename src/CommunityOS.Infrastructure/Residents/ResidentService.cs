@@ -60,6 +60,7 @@ public sealed class ResidentService(
     IAsyncQueryExecutor executor,
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
+    ITenantContext tenantContext,
     CommunityOS.Application.Auth.IPasswordHasher passwordHasher)
     : IResidentService
 {
@@ -96,6 +97,7 @@ public sealed class ResidentService(
             Email = request.Email?.Trim(),
             Phone = request.Phone?.Trim(),
             ResidentType = request.ResidentType.Trim(),
+            PhotoFileId = string.IsNullOrWhiteSpace(request.PhotoFileId) ? null : request.PhotoFileId.Trim(),
             // Verification always starts pending (Req 15.1); the Task 12.3 workflow owns transitions.
             VerificationStatus = ResidentVerificationStatuses.Pending,
         };
@@ -142,6 +144,11 @@ public sealed class ResidentService(
         if (request.UpdateUserId)
         {
             resident.UserId = request.UserId; // null => unlink
+        }
+
+        if (request.UpdatePhotoFileId)
+        {
+            resident.PhotoFileId = string.IsNullOrWhiteSpace(request.PhotoFileId) ? null : request.PhotoFileId.Trim();
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -286,6 +293,65 @@ public sealed class ResidentService(
             .ToListAsync(cancellationToken);
 
         return members;
+    }
+
+    public async Task<IReadOnlyList<ResidentHouseholdUnitDto>> GetResidentHouseholdAsync(Guid residentId, CancellationToken cancellationToken = default)
+    {
+        // Confirm the resident is visible to the caller before returning children (unknown/cross-tenant
+        // → not-found, not an empty list) — same convention as ListEmergencyContactsAsync.
+        var exists = await db.Residents.AsNoTracking().AnyAsync(r => r.Id == residentId, cancellationToken);
+        if (!exists)
+        {
+            throw new NotFoundException("Resident not found.");
+        }
+
+        // The resident's OWN active unit memberships joined to the unit (number/type/status/floor).
+        // HouseholdMember has no Unit navigation, so join db.Units on UnitId (mirrors GetUnitHousehold).
+        // Tenant/self-scoped by the global filter on both sets; AsNoTracking — no over-fetch.
+        var units = await (
+            from h in db.HouseholdMembers.AsNoTracking()
+            where h.ResidentId == residentId && h.EndDate == null
+            join u in db.Units.AsNoTracking() on h.UnitId equals u.Id
+            orderby h.StartDate
+            select new ResidentHouseholdUnitDto(
+                u.Id, u.UnitNumber, u.UnitType, u.UnitStatus, u.Floor, u.CommunityId, h.Relationship, h.StartDate))
+            .ToListAsync(cancellationToken);
+
+        return units;
+    }
+
+    public async Task<ResidentMeDto> GetMeAsync(CancellationToken cancellationToken = default)
+    {
+        // "Who am I": the resident row linked to the current token's user (Resident.UserId == sub) —
+        // a single self-targeted lookup, never a list-and-filter. No authenticated user id, or an
+        // unparseable one, or no linked resident row (e.g. a platform superadmin) → an empty result
+        // (resident null, no units), NOT a 404, so the header falls back to the login identifier.
+        if (!Guid.TryParse(tenantContext.UserId, out var userId))
+        {
+            return new ResidentMeDto(null, []);
+        }
+
+        // Match on UserId (not the first tenant row): admins/guards can see several residents, so the
+        // own row must be the one whose login == this user. Tenant/self-scoped by the global filter.
+        var resident = await db.Residents.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.UserId == userId, cancellationToken);
+        if (resident is null)
+        {
+            return new ResidentMeDto(null, []);
+        }
+
+        // The signed-in resident's OWN active unit memberships (+ unit details) — same join as
+        // GetResidentHouseholdAsync, so one /me call feeds both the header name and the unit pickers.
+        var units = await (
+            from h in db.HouseholdMembers.AsNoTracking()
+            where h.ResidentId == resident.Id && h.EndDate == null
+            join u in db.Units.AsNoTracking() on h.UnitId equals u.Id
+            orderby h.StartDate
+            select new ResidentHouseholdUnitDto(
+                u.Id, u.UnitNumber, u.UnitType, u.UnitStatus, u.Floor, u.CommunityId, h.Relationship, h.StartDate))
+            .ToListAsync(cancellationToken);
+
+        return new ResidentMeDto(ToDto(resident), units);
     }
 
     public async Task<ResidentLoginResult> CreateLoginAsync(Guid residentId, CreateResidentLoginRequest request, CancellationToken cancellationToken = default)
@@ -699,7 +765,7 @@ public sealed class ResidentService(
 
     private static ResidentDto ToDto(Resident r) =>
         new(r.Id, r.CommunityId, r.UserId, r.Name, r.Email, r.Phone, r.ResidentType,
-            r.VerificationStatus, r.RejectionReason, r.IsDeleted);
+            r.VerificationStatus, r.RejectionReason, r.IsDeleted, r.PhotoFileId);
 
     private static HouseholdMemberDto ToDto(HouseholdMember h) =>
         // UnitId is non-null in practice (set on associate); default to Guid.Empty defensively.

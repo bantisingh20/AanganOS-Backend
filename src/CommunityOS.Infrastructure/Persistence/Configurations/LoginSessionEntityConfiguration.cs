@@ -17,6 +17,7 @@ public sealed class LoginSessionEntityConfiguration : IEntityTypeConfiguration<L
         builder.ToTable("LoginSessions");
 
         builder.Property(s => s.TokenId).HasMaxLength(64).IsRequired();
+        builder.Property(s => s.RefreshTokenHash).HasMaxLength(512);
 
         builder.HasIndex(s => s.TokenId)
             .IsUnique()

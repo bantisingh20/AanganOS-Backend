@@ -108,17 +108,104 @@ public sealed class AuthService(
         // session row (one SaveChanges below), so it is atomic.
         await EnforceSingleActiveSessionAsync(user.Id, communityIds, request, cancellationToken);
 
-        db.LoginSessions.Add(new LoginSession
+        // Mint a refresh token for silent re-auth (mobile). The plaintext is returned ONCE; only its
+        // salted hash is stored. The token is "<sessionId>.<secret>" so the server can look the
+        // session up by id (the hasher salts every hash, so we can't match by hashing alone).
+        var session = new LoginSession
         {
             UserId = user.Id,
             TokenId = issued.TokenId,
             IssuedAtUtc = issued.IssuedAtUtc,
             ExpiresAtUtc = issued.ExpiresAtUtc,
-        });
+            RefreshTokenExpiresAtUtc = now.AddDays(_auth.RefreshTokenLifetimeDays),
+        };
+        var refreshSecret = GenerateOpaqueSecret();
+        session.RefreshTokenHash = passwordHasher.Hash(refreshSecret);
+        db.LoginSessions.Add(session);
         await db.SaveChangesAsync(cancellationToken);
 
-        return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames);
+        var refreshToken = $"{session.Id:N}.{refreshSecret}";
+        return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames, refreshToken);
     }
+
+    public async Task<LoginResult> RefreshAsync(RefreshRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var (sessionId, secret) = ParseRefreshToken(request.RefreshToken);
+        if (sessionId is null || string.IsNullOrEmpty(secret))
+        {
+            throw new UnauthenticatedException("Invalid refresh token.");
+        }
+
+        // Load the session tracked (we rotate it below). Bypass tenant filters — there's no principal.
+        var session = await db.LoginSessions
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(s => s.Id == sessionId.Value, cancellationToken);
+
+        var now = clock.UtcNow;
+        if (session is null
+            || session.RevokedAtUtc is not null
+            || session.RefreshTokenHash is null
+            || session.RefreshTokenExpiresAtUtc is null
+            || session.RefreshTokenExpiresAtUtc <= now
+            || !passwordHasher.Verify(session.RefreshTokenHash, secret))
+        {
+            // Any failure is a generic rejection → the client clears and routes to login.
+            throw new UnauthenticatedException("The session has expired. Please sign in again.");
+        }
+
+        var user = await db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == session.UserId, cancellationToken);
+        if (user is null || user.Status != UserStatus.Active || user.IsDeleted)
+        {
+            throw new UnauthenticatedException("The session has expired. Please sign in again.");
+        }
+
+        // Re-resolve current authorization/scope so a role/scope change takes effect on refresh.
+        var (communityIds, isSuperAdmin, roleNames) = await ResolveAuthorizationAsync(user.Id, cancellationToken);
+        var (isResidentSelfScoped, residentUnitId) = isSuperAdmin
+            ? (false, (Guid?)null)
+            : await ResolveResidentScopeAsync(user.Id, cancellationToken);
+
+        var issued = tokenIssuer.Issue(new TokenIssueRequest(
+            user.Id, communityIds, isSuperAdmin, roleNames,
+            IsResidentSelfScoped: isResidentSelfScoped,
+            ResidentUnitId: residentUnitId));
+
+        // Rotate: the SAME session row now carries the new access-token jti + a fresh refresh secret,
+        // so the old refresh token (and old access jti) stop working — one-time-use refresh.
+        session.TokenId = issued.TokenId;
+        session.IssuedAtUtc = issued.IssuedAtUtc;
+        session.ExpiresAtUtc = issued.ExpiresAtUtc;
+        session.RefreshTokenExpiresAtUtc = now.AddDays(_auth.RefreshTokenLifetimeDays);
+        var newSecret = GenerateOpaqueSecret();
+        session.RefreshTokenHash = passwordHasher.Hash(newSecret);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var refreshToken = $"{session.Id:N}.{newSecret}";
+        return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames, refreshToken);
+    }
+
+    /// <summary>Split a "&lt;sessionId&gt;.&lt;secret&gt;" refresh token into its parts; nulls on malformed input.</summary>
+    private static (Guid? SessionId, string Secret) ParseRefreshToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return (null, string.Empty);
+        }
+        var dot = token.IndexOf('.');
+        if (dot <= 0 || dot == token.Length - 1)
+        {
+            return (null, string.Empty);
+        }
+        return Guid.TryParseExact(token[..dot], "N", out var id)
+            ? (id, token[(dot + 1)..])
+            : (null, string.Empty);
+    }
+
+    /// <summary>A high-entropy, URL-safe opaque secret for a refresh token (256 bits).</summary>
+    private static string GenerateOpaqueSecret() =>
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
     /// <summary>
     /// Enforce single-active-session on login: revoke the user's OTHER active sessions, notify the

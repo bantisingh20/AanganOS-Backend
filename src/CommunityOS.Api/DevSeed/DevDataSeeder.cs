@@ -216,6 +216,11 @@ public static class DevDataSeeder
             (PermissionAction.View, "TicketAttachment"),
             (PermissionAction.View, "Announcement"),
             (PermissionAction.View, "Community"),
+            // File_Service upload + download. Residents capture photos (visitor pass, ticket
+            // attachment, guard photo) and view them back; without these the multipart upload 403s
+            // on Create and the authorized image download 403s on View (photo saves/shows nothing).
+            (PermissionAction.Create, "File"),
+            (PermissionAction.View, "File"),
             // Master-data reads (dropdown option lists: Vehicle_Type, Visitor_Category,
             // ID_Proof_Type, Ticket_Category, etc.). The master-data GET is View-gated on
             // "MasterData"; without this grant a resident's dropdowns 403 ("no permission").

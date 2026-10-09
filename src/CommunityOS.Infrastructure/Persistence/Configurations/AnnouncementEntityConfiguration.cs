@@ -25,6 +25,8 @@ public sealed class AnnouncementEntityConfiguration : IEntityTypeConfiguration<A
         builder.Property(a => a.Title).IsRequired().HasMaxLength(200);
         builder.Property(a => a.Body).IsRequired().HasMaxLength(4000);
         builder.Property(a => a.Category).IsRequired().HasMaxLength(50);
+        // Reversible board-visibility flag (admin activate/deactivate). Defaults to true.
+        builder.Property(a => a.IsActive).HasDefaultValue(true);
 
         // The board's newest-first list as a single indexed read, no N+1.
         builder.HasIndex(a => new { a.CommunityId, a.PublishedAtUtc })

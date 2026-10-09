@@ -83,6 +83,13 @@ public sealed class PermissionEntityConfiguration : IEntityTypeConfiguration<Per
             // (Task 16.2), not gated here. Seeded as editable catalog data so roles can grant them.
             ("VisitPass", [PermissionAction.View, PermissionAction.Create, PermissionAction.Edit, PermissionAction.Delete]),
             ("Visitor", [PermissionAction.View, PermissionAction.Create, PermissionAction.Edit, PermissionAction.Approve, PermissionAction.Delete]),
+            // Entry/exit events (Task 16.2, Req 25.3-25.5). A guard records an ENTRY and a matching
+            // EXIT at the gate — BOTH gate on (Create, EntryExitEvent) (the exit closes the open
+            // entry, modelled as another create). View lists the gate log. This MUST be in the catalog
+            // or the entry/exit endpoints 403 for everyone but superadmin — the earlier "verification
+            // not gated here" note was wrong; the endpoints really do require this grant. Seeded as
+            // editable catalog data so the Security role (and others) can hold it.
+            ("EntryExitEvent", [PermissionAction.View, PermissionAction.Create]),
             // Gate security operations (Task 16.3). WatchlistEntry: View gates reads (Req 26.3),
             // Create adds/clears entries (Req 26.1, 26.5); the watchlist-match override at entry reuses
             // Visitor.Approve (above). GuardShift: View lists the roster (Req 26.5), Create schedules
@@ -240,6 +247,13 @@ public sealed class PermissionEntityConfiguration : IEntityTypeConfiguration<Per
             // announcement is published, edited and retired — a Soft_Delete that keeps it traceable).
             // Seeded as editable catalog data so roles can grant them.
             ("Announcement", [PermissionAction.View, PermissionAction.Create, PermissionAction.Edit, PermissionAction.Delete]),
+            // File_Service (Task 6.1) — multipart upload + authorized streaming download. Create
+            // gates the upload endpoint, View gates the download endpoint (on top of the View check
+            // the service runs against the file's OWNING resource type). Seeded so non-superadmin
+            // roles (e.g. Resident capturing a visitor/guard photo or a ticket attachment) can be
+            // granted file access; without this entry the grant is dropped and only superadmin, who
+            // bypasses the gate, could ever upload/download — so photos saved but never displayed.
+            ("File", [PermissionAction.View, PermissionAction.Create]),
         };
 
         foreach (var (resourceType, actions) in catalog)

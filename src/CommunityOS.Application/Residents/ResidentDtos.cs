@@ -11,6 +11,7 @@ namespace CommunityOS.Application.Residents;
 /// <param name="VerificationStatus">Verification status code; <c>pending</c> on create (Req 15.1).</param>
 /// <param name="RejectionReason">Reason recorded on rejection (Task 12.3), else null.</param>
 /// <param name="IsArchived">Whether the resident is soft-deleted (Req 15.5).</param>
+/// <param name="PhotoFileId">Optional File_Service reference to the resident's photo, else null.</param>
 public sealed record ResidentDto(
     Guid Id,
     Guid CommunityId,
@@ -21,7 +22,8 @@ public sealed record ResidentDto(
     string ResidentType,
     string VerificationStatus,
     string? RejectionReason,
-    bool IsArchived);
+    bool IsArchived,
+    string? PhotoFileId = null);
 
 /// <summary>Read shape for a <c>HouseholdMember</c> association (Req 15.2).</summary>
 /// <param name="Id">The association id.</param>
@@ -56,6 +58,43 @@ public sealed record UnitHouseholdMemberDto(
     string Relationship,
     DateTime StartDate);
 
+/// <summary>
+/// One of a RESIDENT's own active unit memberships (Req 15.2) — the unit the resident belongs to
+/// plus their relationship to it. Returned by <c>GET /residents/{id}/household</c> so a resident's
+/// self-service screens resolve THEIR OWN unit(s) instead of listing the whole community.
+/// </summary>
+/// <param name="UnitId">The unit the resident belongs to.</param>
+/// <param name="UnitNumber">The unit's number (e.g. C-409).</param>
+/// <param name="UnitType">Configurable unit-type code.</param>
+/// <param name="UnitStatus">Configurable unit-status code.</param>
+/// <param name="Floor">Optional floor label.</param>
+/// <param name="CommunityId">Owning community (for uploads/dropdowns scoped to it).</param>
+/// <param name="Relationship">The resident's household relationship to the unit (owner / tenant / ...).</param>
+/// <param name="StartDate">When the association began.</param>
+public sealed record ResidentHouseholdUnitDto(
+    Guid UnitId,
+    string UnitNumber,
+    string UnitType,
+    string UnitStatus,
+    string? Floor,
+    Guid CommunityId,
+    string Relationship,
+    DateTime StartDate);
+
+/// <summary>
+/// "Who am I" shape for the signed-in principal (<c>GET /residents/me</c>): the ONE resident row
+/// linked to the access token's user (<c>Resident.UserId == token sub</c>) plus that resident's own
+/// active unit memberships. Lets the app resolve the signed-in person's name + units in a single
+/// targeted call instead of listing residents and filtering by userId client-side. When the
+/// principal has no linked resident row (e.g. a platform superadmin) <paramref name="Resident"/> is
+/// null and <paramref name="Units"/> is empty — NOT a 404 — so callers fall back cleanly.
+/// </summary>
+/// <param name="Resident">The signed-in person's own resident row, or null when none is linked.</param>
+/// <param name="Units">The resident's own active unit memberships (empty when none / no resident).</param>
+public sealed record ResidentMeDto(
+    ResidentDto? Resident,
+    IReadOnlyList<ResidentHouseholdUnitDto> Units);
+
 /// <summary>Read shape for an <c>EmergencyContact</c> (Req 15.3).</summary>
 /// <param name="Id">The contact id.</param>
 /// <param name="ResidentId">The owning resident.</param>
@@ -80,13 +119,15 @@ public sealed record EmergencyContactDto(
 /// <param name="Email">Optional contact email.</param>
 /// <param name="Phone">Optional contact phone.</param>
 /// <param name="ResidentType">Resident-type code from the Resident_Type list. Required.</param>
+/// <param name="PhotoFileId">Optional File_Service photo reference; null when none.</param>
 public sealed record CreateResidentRequest(
     Guid CommunityId,
     Guid? UserId,
     string Name,
     string? Email,
     string? Phone,
-    string ResidentType);
+    string ResidentType,
+    string? PhotoFileId = null);
 
 /// <summary>
 /// Edit a resident's profile fields. Null string fields are left unchanged; a changed type is
@@ -100,6 +141,8 @@ public sealed record CreateResidentRequest(
 /// <param name="UpdatePhone">When true, <see cref="Phone"/> is applied (allowing null = clear); when false untouched.</param>
 /// <param name="UserId">New linked user; see <see cref="UpdateUserId"/>.</param>
 /// <param name="UpdateUserId">When true, <see cref="UserId"/> is applied (allowing null = unlink); when false untouched.</param>
+/// <param name="PhotoFileId">New photo reference; see <see cref="UpdatePhotoFileId"/>.</param>
+/// <param name="UpdatePhotoFileId">When true, <see cref="PhotoFileId"/> is applied (allowing null = clear); when false untouched.</param>
 public sealed record UpdateResidentRequest(
     string? Name,
     string? ResidentType,
@@ -108,7 +151,9 @@ public sealed record UpdateResidentRequest(
     string? Phone,
     bool UpdatePhone,
     Guid? UserId,
-    bool UpdateUserId);
+    bool UpdateUserId,
+    string? PhotoFileId = null,
+    bool UpdatePhotoFileId = false);
 
 /// <summary>
 /// Associate a resident with a unit as a household member (Req 15.2). The unit must belong to the

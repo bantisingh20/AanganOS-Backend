@@ -230,6 +230,12 @@ public static class MasterDataKeys
     public const string CommunityType = "Community_Type";
 
     /// <summary>
+    /// Configurable announcement categories the notice board classifies a notice by (general / event
+    /// / maintenance / emergency). Editable per community, validated at runtime, not a frozen enum.
+    /// </summary>
+    public const string AnnouncementCategory = "Announcement_Category";
+
+    /// <summary>
     /// Configurable property-hierarchy levels (Req 13.1, 13.2): Phase, Building/Tower, Block, Zone,
     /// Floor. Levels are optional and editable — a HierarchyNode's level validates against this list.
     /// </summary>

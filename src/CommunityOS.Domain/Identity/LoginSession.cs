@@ -28,4 +28,16 @@ public class LoginSession : PlatformEntity
 
     /// <summary>When the session was revoked (logout, Req 1.3). Null while active.</summary>
     public DateTime? RevokedAtUtc { get; set; }
+
+    /// <summary>
+    /// Salted hash of this session's refresh-token SECRET (never the plaintext). The client holds a
+    /// refresh token of the form <c>&lt;sessionId&gt;.&lt;secret&gt;</c>; on refresh the server looks the
+    /// session up by its <see cref="Common.PlatformEntity.Id"/> and verifies the secret against this
+    /// hash. Rotated on every successful refresh (one-time use → replay protection). Null when the
+    /// session has no refresh token.
+    /// </summary>
+    public string? RefreshTokenHash { get; set; }
+
+    /// <summary>When the refresh token expires (UTC). After this, refresh fails and the user must re-login.</summary>
+    public DateTime? RefreshTokenExpiresAtUtc { get; set; }
 }

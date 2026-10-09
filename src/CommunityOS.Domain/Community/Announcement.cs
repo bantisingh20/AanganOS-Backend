@@ -36,6 +36,15 @@ public class Announcement : TenantOwnedEntity
 
     /// <summary>When the announcement was published (UTC). The board is ordered newest-first on this.</summary>
     public DateTime PublishedAtUtc { get; set; }
+
+    /// <summary>
+    /// Whether the announcement is live on the resident notice board. An admin can deactivate an old
+    /// notice (hide it from residents) and reactivate it later — a REVERSIBLE visibility flag,
+    /// distinct from the one-way soft-delete (which removes it from every list). Defaults to true
+    /// (a newly published notice is active). The resident board lists only active notices; the admin
+    /// screen lists all so inactive ones can be re-activated or edited.
+    /// </summary>
+    public bool IsActive { get; set; } = true;
 }
 
 /// <summary>

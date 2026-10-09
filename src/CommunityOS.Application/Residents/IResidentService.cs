@@ -75,6 +75,24 @@ public interface IResidentService
     Task<IReadOnlyList<UnitHouseholdMemberDto>> GetUnitHouseholdAsync(Guid unitId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// List a RESIDENT's own ACTIVE unit memberships (open associations, <c>EndDate == null</c>) with
+    /// each unit's details (Req 15.2). Tenant/self-scoped by the global filter; <c>AsNoTracking</c>.
+    /// Lets a resident's self-service screens resolve their OWN unit(s) instead of the whole community.
+    /// Unknown resident → not found.
+    /// </summary>
+    Task<IReadOnlyList<ResidentHouseholdUnitDto>> GetResidentHouseholdAsync(Guid residentId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolve the SIGNED-IN principal's own resident row + their own active unit memberships
+    /// (<c>GET /residents/me</c>). Matches the resident whose <c>UserId</c> equals the current access
+    /// token's user id (the Resident→User link) — a single self-targeted lookup, never a list-and-
+    /// filter. A principal with no linked resident row (e.g. a platform superadmin) yields a result
+    /// with a null resident and empty units (not a NOT_FOUND), so the caller can fall back to the
+    /// login identifier. Reads are tenant/self-scoped by the global filter and use <c>AsNoTracking</c>.
+    /// </summary>
+    Task<ResidentMeDto> GetMeAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Create a login (User) for a resident and link it (Req 3.1, 15.1). Requires the <c>Create</c>
     /// permission on <c>User</c> + an authorized community (defense-in-depth). Hashes the plaintext
     /// password server-side, creates the user with the identifier (as email or phone), sets the

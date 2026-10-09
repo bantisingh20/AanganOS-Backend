@@ -32,10 +32,17 @@ public sealed class AuthOptions
     public int OtpLength { get; init; } = 6;
 
     /// <summary>
-    /// Issued bearer-token lifetime, in minutes. Default 60. The range allows up to 30 days so a
-    /// deployment without a refresh-token flow can issue a long-lived session token and avoid
-    /// re-prompting the user on every expiry.
+    /// Issued access-token lifetime, in minutes. With a refresh-token flow this can be short (the
+    /// client silently refreshes), so the default is 60 minutes.
     /// </summary>
     [Range(1, 43200)]
     public int TokenLifetimeMinutes { get; init; } = 60;
+
+    /// <summary>
+    /// Refresh-token lifetime, in days (Req 1: silent re-auth). The client swaps a valid refresh
+    /// token for a fresh access token without re-prompting; only after this window (or an explicit
+    /// logout) must the user sign in again. Default 30 days.
+    /// </summary>
+    [Range(1, 365)]
+    public int RefreshTokenLifetimeDays { get; init; } = 30;
 }

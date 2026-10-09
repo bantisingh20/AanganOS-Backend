@@ -10,10 +10,12 @@ namespace CommunityOS.Api.Endpoints;
 
 /// <summary>
 /// Minimal, usable surface over Config_Service (Task 3.1) — the full admin UI is a later phase.
-/// Every response uses the <see cref="ApiResult{T}"/> envelope (Req 9.1); writes require the Edit
-/// permission and reads require View via <see cref="RequirePermissionAttribute"/> (the Task 5.3
-/// authorization seam, Req 8.2/4.1); request bodies validate at the trust boundary (Req 9.2); and
-/// the master-data read is a paginated list (Req 9.3).
+/// Every response uses the <see cref="ApiResult{T}"/> envelope (Req 9.1); config reads/writes and
+/// master-data WRITES require their permission via <see cref="RequirePermissionAttribute"/> (the
+/// Task 5.3 authorization seam, Req 8.2/4.1). The master-data READ is intentionally permission-free
+/// — any authenticated user may read the dropdown reference lists (only <c>.RequireAuthorization()</c>,
+/// no (View, MasterData) grant) so no role 403s on a form dropdown. Request bodies validate at the
+/// trust boundary (Req 9.2); the master-data read is a paginated list (Req 9.3).
 ///
 /// <para>A <c>communityId</c> query parameter selects the community scope; omitting it targets the
 /// platform-wide default. Config_Service applies community→platform fallback on reads (Req 8.1, 8.3)
@@ -83,7 +85,13 @@ public static class ConfigEndpoints
                 };
                 return Results.Ok(ApiResult<PagedData<MasterDataEntry>>.Ok(data, string.Empty));
             })
-            .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "MasterData"));
+            // Master-data reads are dropdown reference lists (Vehicle_Type, Visitor_Category,
+            // ID_Proof_Type, Ticket_Category, ...). EVERY authenticated role needs them to render a
+            // form, so there is NO per-permission lock here — only an authenticated-user requirement
+            // (so an anonymous caller still gets 401, never anonymous access). This avoids the trap of
+            // each new role (e.g. Security) 403-ing on dropdowns because it was missing a
+            // (View, MasterData) grant. The WRITE (PUT) below stays gated on (Edit, MasterData).
+            .RequireAuthorization();
 
         // PUT /api/v1/master-data/{listKey} — add/update an entry (platform or community); audited.
         master.MapPut("/{listKey}", async (

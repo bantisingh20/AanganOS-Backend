@@ -41,7 +41,22 @@ public static class AuthEndpoints
             {
                 var result = await auth.LoginAsync(
                     new LoginRequest(body.Identifier, body.Password, body.OneSignalPlayerId, body.Platform), ct);
-                var response = new LoginResponse(result.AccessToken, result.ExpiresAtUtc, result.Roles);
+                var response = new LoginResponse(result.AccessToken, result.ExpiresAtUtc, result.Roles, result.RefreshToken);
+                return Results.Ok(ApiResult<LoginResponse>.Ok(response, string.Empty));
+            })
+            .AddEndpointFilter<DataAnnotationsValidationFilter>();
+
+        // POST /api/v1/auth/refresh — anonymous (pre-auth, like login). Swaps a valid refresh token
+        // for a fresh access token + rotated refresh token (silent re-auth, no password). An
+        // invalid/expired/revoked token surfaces as UNAUTHENTICATED → the client clears + routes to
+        // login. Shares the auth rate-limit.
+        group.MapPost("/refresh", async (
+                RefreshBody body,
+                IAuthService auth,
+                CancellationToken ct) =>
+            {
+                var result = await auth.RefreshAsync(new RefreshRequest(body.RefreshToken), ct);
+                var response = new LoginResponse(result.AccessToken, result.ExpiresAtUtc, result.Roles, result.RefreshToken);
                 return Results.Ok(ApiResult<LoginResponse>.Ok(response, string.Empty));
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
@@ -122,11 +137,23 @@ public static class AuthEndpoints
         public string? Platform { get; init; }
     }
 
-    /// <summary>Login success payload: token + roles only — never the password hash or any other secret (Req 1.1).</summary>
+    /// <summary>
+    /// Login/refresh success payload: the access token + its expiry + roles + the refresh token for
+    /// silent re-auth. Never the password hash. The refresh token is a one-time-use opaque string
+    /// the client stores securely and swaps at <c>/auth/refresh</c> when the access token expires.
+    /// </summary>
     public sealed record LoginResponse(
         string AccessToken,
         DateTime ExpiresAtUtc,
-        IReadOnlyCollection<string> Roles);
+        IReadOnlyCollection<string> Roles,
+        string RefreshToken);
+
+    public sealed class RefreshBody
+    {
+        [Required(AllowEmptyStrings = false, ErrorMessage = "refreshToken is required")]
+        [MaxLength(256)]
+        public string RefreshToken { get; init; } = string.Empty;
+    }
 
     public sealed record LogoutResponse(bool LoggedOut);
 

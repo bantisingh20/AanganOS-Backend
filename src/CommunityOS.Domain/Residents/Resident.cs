@@ -49,6 +49,14 @@ public class Resident : TenantOwnedEntity
     public string? Phone { get; set; }
 
     /// <summary>
+    /// Optional File_Service reference to the resident's photo (e.g. a security guard's face photo),
+    /// or null when none was captured. Never mandatory. Stored as the opaque upload reference the
+    /// client gets from File_Service, mirroring <c>Parcel.PhotoFileId</c> — the bytes are reached
+    /// through the authorized <c>GET /api/v1/files/{reference}</c> route, never a public URL.
+    /// </summary>
+    public string? PhotoFileId { get; set; }
+
+    /// <summary>
     /// Configurable resident-type code resolved against the <c>Resident_Type</c> master-data list
     /// (owner / co_owner / tenant / family_member, Req 15.1). Stored as the stable code, never a
     /// frozen enum.

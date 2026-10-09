@@ -30,6 +30,17 @@ public interface IAuthService
     Task LogoutAsync(string tokenId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Exchange a valid refresh token for a FRESH access token + a rotated refresh token, with no
+    /// password (silent re-auth, mobile). The refresh token is <c>&lt;sessionId&gt;.&lt;secret&gt;</c>;
+    /// the session is looked up by id and the secret verified against its stored hash. Fails
+    /// (UnauthenticatedException) when the session is unknown, revoked, the refresh token is expired,
+    /// or the secret doesn't match. On success the old refresh secret is ROTATED (one-time use), so a
+    /// replayed/old refresh token no longer works. The access token's claims are re-resolved from the
+    /// user's current roles/scope.
+    /// </summary>
+    Task<LoginResult> RefreshAsync(RefreshRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Begin a password reset: generate a single-use OTP for the registered identifier and deliver
     /// it to the user's registered contact (Req 2.1). The OTP expires within the configured window
     /// (Req 2.2). To avoid account enumeration, an unknown identifier completes without error and
@@ -67,7 +78,11 @@ public sealed record LoginRequest(
 public sealed record LoginResult(
     string AccessToken,
     DateTime ExpiresAtUtc,
-    IReadOnlyCollection<string> Roles);
+    IReadOnlyCollection<string> Roles,
+    string RefreshToken);
+
+/// <summary>A silent re-auth request: the opaque refresh token (<c>&lt;sessionId&gt;.&lt;secret&gt;</c>) the client holds.</summary>
+public sealed record RefreshRequest(string RefreshToken);
 
 /// <summary>A password-reset request for a registered identifier (email or phone) (Req 2.1).</summary>
 public sealed record PasswordResetRequest(string Identifier);

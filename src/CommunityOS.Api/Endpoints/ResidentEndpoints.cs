@@ -51,7 +51,8 @@ public static class ResidentEndpoints
                     body.Name!,
                     body.Email,
                     body.Phone,
-                    body.ResidentType!), ct);
+                    body.ResidentType!,
+                    body.PhotoFileId), ct);
                 return Results.Ok(ApiResult<ResidentDto>.Ok(dto, string.Empty));
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>()
@@ -94,6 +95,20 @@ public static class ResidentEndpoints
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Resident"));
 
+        // GET /api/v1/residents/me — the SIGNED-IN principal's own resident row + own unit memberships
+        // (Resident.UserId == token user). One self-targeted call for the app's "who am I" (header
+        // name, self-service unit pickers) — no list-and-filter. No linked resident (e.g. superadmin)
+        // → { resident: null, units: [] }, not NOT_FOUND. Registered BEFORE /{id:guid} so the literal
+        // "me" segment is matched here, never treated as an id.
+        group.MapGet("/me", async (
+                IResidentService residents,
+                CancellationToken ct) =>
+            {
+                var dto = await residents.GetMeAsync(ct);
+                return Results.Ok(ApiResult<ResidentMeDto>.Ok(dto, string.Empty));
+            })
+            .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Resident"));
+
         // GET /api/v1/residents/{id} — fetch one, tenant-scoped. Unknown/foreign id → NOT_FOUND.
         group.MapGet("/{id:guid}", async (
                 Guid id,
@@ -121,7 +136,9 @@ public static class ResidentEndpoints
                     body.Phone,
                     body.UpdatePhone,
                     body.UserId,
-                    body.UpdateUserId), ct);
+                    body.UpdateUserId,
+                    body.PhotoFileId,
+                    body.UpdatePhotoFileId), ct);
                 return Results.Ok(ApiResult<ResidentDto>.Ok(dto, string.Empty));
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>()
@@ -227,6 +244,18 @@ public static class ResidentEndpoints
             .RequireRateLimiting(RateLimitingExtensions.WritePolicy)
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.Create, "HouseholdMember"));
 
+        // GET /{id}/household — the resident's OWN active unit memberships + unit details (Req 15.2).
+        // Lets a resident's self-service screens resolve their own unit(s), not the whole community.
+        group.MapGet("/{id:guid}/household", async (
+                Guid id,
+                IResidentService residents,
+                CancellationToken ct) =>
+            {
+                var data = await residents.GetResidentHouseholdAsync(id, ct);
+                return Results.Ok(ApiResult<IReadOnlyList<ResidentHouseholdUnitDto>>.Ok(data, string.Empty));
+            })
+            .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "HouseholdMember"));
+
         // --- Create login for a resident (Req 3.1, 15.1) — Create on User. Hashes the password
         //     server-side, creates the User, links Resident.UserId and assigns a role scoped to the
         //     community so the login can use resident features. ---
@@ -321,6 +350,10 @@ public static class ResidentEndpoints
         [Required(AllowEmptyStrings = false, ErrorMessage = "residentType is required")]
         [MaxLength(100)]
         public string? ResidentType { get; init; }
+
+        // Optional File_Service photo reference; null when none captured.
+        [MaxLength(200)]
+        public string? PhotoFileId { get; init; }
     }
 
     public sealed class UpdateResidentBody
@@ -347,6 +380,12 @@ public static class ResidentEndpoints
 
         // When true UserId is applied (allowing null = unlink); when false untouched.
         public bool UpdateUserId { get; init; }
+
+        [MaxLength(200)]
+        public string? PhotoFileId { get; init; }
+
+        // When true PhotoFileId is applied (allowing null = clear); when false untouched.
+        public bool UpdatePhotoFileId { get; init; }
     }
 
     public sealed class RejectResidentBody

@@ -82,6 +82,16 @@ public sealed class MasterDataItemEntityConfiguration : IEntityTypeConfiguration
             ("mixed", "Mixed Development"),
         };
 
+        // Announcement_Category (notice board): the configurable notice classifications. Editable
+        // per community, validated at runtime, not a frozen enum.
+        var announcementCategories = new (string Code, string Label)[]
+        {
+            ("general", "General"),
+            ("event", "Event"),
+            ("maintenance", "Maintenance"),
+            ("emergency", "Emergency"),
+        };
+
         // Hierarchy_Level (Req 13.1, 13.2): the optional property-hierarchy levels. Any may be used
         // or omitted; a HierarchyNode's level is validated against this editable list, not an enum.
         var hierarchyLevels = new (string Code, string Label)[]
@@ -102,6 +112,9 @@ public sealed class MasterDataItemEntityConfiguration : IEntityTypeConfiguration
             ("co_owner", "Co-Owner"),
             ("tenant", "Tenant"),
             ("family_member", "Family Member"),
+            // Staff/guard person records (a Security-role login, not a unit occupant). Lets the admin
+            // list/filter security staff separately from residents.
+            ("security", "Security / Guard"),
         };
 
         // Resident_Verification_Status (Req 15.1, 17.x): the resident verification states. Seeded so
@@ -778,6 +791,12 @@ public sealed class MasterDataItemEntityConfiguration : IEntityTypeConfiguration
         foreach (var (code, label) in communityTypes)
         {
             yield return Platform(MasterDataKeys.CommunityType, code, label, order++);
+        }
+
+        order = 0;
+        foreach (var (code, label) in announcementCategories)
+        {
+            yield return Platform(MasterDataKeys.AnnouncementCategory, code, label, order++);
         }
 
         order = 0;

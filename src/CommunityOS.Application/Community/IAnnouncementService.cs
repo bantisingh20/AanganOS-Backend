@@ -16,10 +16,28 @@ public interface IAnnouncementService
     /// notices hidden); the allow-listed query config fixes the sort/filter/search surface;
     /// <c>AsNoTracking</c> projection, page size clamped by the shared policy — mirrors
     /// <c>ListAmenitiesAsync</c>.
+    ///
+    /// <para>By default only ACTIVE notices are returned (the resident board). An admin management
+    /// view passes <paramref name="includeInactive"/> = true to see deactivated notices as well so
+    /// they can be re-activated or edited.</para>
     /// </summary>
     Task<CommunityOS.Contracts.Envelope.PagedData<AnnouncementDto>> ListAnnouncementsAsync(
-        CommunityOS.Application.Querying.ListQueryParameters parameters, CancellationToken cancellationToken = default);
+        CommunityOS.Application.Querying.ListQueryParameters parameters,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Fetch one announcement by id, tenant-scoped; unknown/foreign/soft-deleted id → null.</summary>
     Task<AnnouncementDto?> GetAnnouncementAsync(Guid announcementId, CancellationToken cancellationToken = default);
+
+    /// <summary>Publish a new announcement (admin). Requires <c>Create</c> on <c>Announcement</c>; category validated.</summary>
+    Task<AnnouncementDto> CreateAnnouncementAsync(CreateAnnouncementRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>Edit an announcement's title/body/category (admin). Requires <c>Edit</c>; unknown id → NOT_FOUND.</summary>
+    Task<AnnouncementDto> UpdateAnnouncementAsync(Guid announcementId, UpdateAnnouncementRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>Activate/deactivate board visibility (admin). Requires <c>Edit</c>; unknown id → NOT_FOUND.</summary>
+    Task<AnnouncementDto> SetAnnouncementActiveAsync(Guid announcementId, bool isActive, CancellationToken cancellationToken = default);
+
+    /// <summary>Soft-delete an announcement (admin). Requires <c>Delete</c>; retained + traceable; unknown id → NOT_FOUND.</summary>
+    Task DeleteAnnouncementAsync(Guid announcementId, CancellationToken cancellationToken = default);
 }
