@@ -424,6 +424,9 @@ public static class DependencyInjection
         // that compose the data layer without the resident module.
         services.TryAddScoped<ICommunicationPreferences, DefaultCommunicationPreferences>();
         services.AddScoped<INotificationService, NotificationService>();
+        // In-app notification inbox read side (Task 20261008): reads the recipient's own outbox rows
+        // (written by the common EnqueueAsync helper) + flips their read flag. No per-feature save.
+        services.AddScoped<CommunityOS.Application.Notifications.INotificationInboxService, Notifications.NotificationInboxService>();
 
         // Notification dispatch (Task 7.2): the OneSignal push client + the dispatcher the worker
         // calls. IOneSignalClient is a TYPED HttpClient (IHttpClientFactory) so connections are

@@ -37,5 +37,9 @@ public sealed class NotificationOutboxMessageEntityConfiguration : IEntityTypeCo
         // Lookup a recipient's notifications (admin "sent notifications" view, tenant-filtered).
         builder.HasIndex(m => m.RecipientUserId)
             .HasDatabaseName("IX_NotificationOutbox_Recipient");
+
+        // In-app inbox read path: a recipient's own notifications, newest first, with unread filter.
+        builder.HasIndex(m => new { m.RecipientUserId, m.IsRead, m.CreatedAtUtc })
+            .HasDatabaseName("IX_NotificationOutbox_Recipient_Read_Created");
     }
 }

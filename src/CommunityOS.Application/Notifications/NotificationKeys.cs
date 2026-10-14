@@ -32,6 +32,18 @@ public static class NotificationTemplateKeys
     public const string VisitorRequest = "visitor.request";
 
     /// <summary>
+    /// A resident APPROVED a walk-in → notify the GUARD who registered it so they can admit the
+    /// visitor (Task 20261008). Category <c>visitor</c> (optional); fills {visitorName}, {unitNumber}.
+    /// </summary>
+    public const string VisitorApproved = "visitor.approved";
+
+    /// <summary>
+    /// A resident REJECTED a walk-in → notify the GUARD who registered it (Task 20261008). Category
+    /// <c>visitor</c> (optional); fills {visitorName}, {unitNumber}, {reason}.
+    /// </summary>
+    public const string VisitorRejected = "visitor.rejected";
+
+    /// <summary>
     /// A high-severity incident met the configured escalation threshold → notify the responders
     /// (Req 27.2). Category <c>responder</c> (mandatory — security staff must always receive it);
     /// fills {category}, {severity}, {location}.

@@ -80,6 +80,9 @@ public sealed class GateService(
             .Filterable("status", v => v.Status)
             .Filterable("category", v => v.Category)
             .Filterable("hostUnitId", v => v.UnitId)
+            // Registered date (createdAtUtc) is filterable so the walk-in list can be scoped to a day
+            // (fromDate/toDate via >= / <= on the endpoint). Default-today lives in the client.
+            .Filterable("createdAtUtc", v => v.CreatedAtUtc)
             .Searchable(v => v.Name);
 
     private static readonly ListQueryConfiguration<EntryExitEvent> EntryExitEventQueryConfig =
@@ -508,6 +511,25 @@ public sealed class GateService(
         var admit = await ResolveAdmittableAuthorizationAsync(kind, request.VisitorId, request.VisitPassId, request.RecurringVisitorId, now, cancellationToken);
         authorizationGuard.EnsureCommunityAuthorized(admit.CommunityId);
 
+        // No DOUBLE entry: if this authorization already has an OPEN entry (someone recorded them in
+        // and they haven't been exited yet), reject — the visitor is already on-site. Record their
+        // EXIT before a new entry. This stops a guard tapping "Record entry" twice from creating two
+        // on-site rows for the same walk-in/pass (the reported bug). Re-entry is allowed once exited.
+        var openExists = kind switch
+        {
+            AuthorizationKind.WalkIn => await db.EntryExitEvents.AsNoTracking()
+                .AnyAsync(e => e.VisitorId == request.VisitorId && e.ExitTsUtc == null, cancellationToken),
+            AuthorizationKind.VisitPass => await db.EntryExitEvents.AsNoTracking()
+                .AnyAsync(e => e.VisitPassId == request.VisitPassId && e.ExitTsUtc == null, cancellationToken),
+            _ => await db.EntryExitEvents.AsNoTracking()
+                .AnyAsync(e => e.RecurringVisitorId == request.RecurringVisitorId && e.ExitTsUtc == null, cancellationToken),
+        };
+        if (openExists)
+        {
+            throw new ConflictException(
+                "This visitor is already on-site (an entry is open). Record their exit before recording a new entry.");
+        }
+
         // Watchlist override gate (Req 26.5): if the admitted subject (name / vehicle number) matches
         // the community's ACTIVE watchlist, the entry is FLAGGED and may only proceed when the caller
         // holds the Approve permission on Visitor (the authorized override). Without it the entry is
@@ -716,11 +738,53 @@ public sealed class GateService(
             new AuditEntry(auditAction, "Visitor", visitor.Id.ToString(), visitor.CommunityId, Detail: detail),
             cancellationToken);
 
+        // Notify the GUARD who registered this walk-in of the decision (Task 20261008), so their
+        // in-app inbox shows whether it was approved/rejected. Uses the SAME common EnqueueAsync
+        // helper (only Adds the outbox row — committed atomically by the SaveChanges below). The
+        // guard is Visitor.CreatedBy (stamped by the audit interceptor at registration). Best-effort:
+        // a missing/unparseable creator just skips the notice and never blocks the decision.
+        await NotifyRegisteringGuardAsync(visitor, toStatus, detail, cancellationToken);
+
         // RowVersion makes the decision record exactly once under concurrency: the loser's save trips
         // a DbUpdateConcurrencyException mapped centrally to CONFLICT (Req 24.3).
         await db.SaveChangesAsync(cancellationToken);
 
         return ToDto(visitor);
+    }
+
+    /// <summary>
+    /// Enqueue the walk-in decision notice to the guard who registered it (Task 20261008). The guard
+    /// is <see cref="Visitor.CreatedBy"/>; resolve the host unit's number for the message. Enqueue
+    /// only Adds the outbox row (no save) so it commits with the decision. No recipient / unknown
+    /// template → silent no-op (the enqueue helper never throws), so the decision is never blocked.
+    /// </summary>
+    private async Task NotifyRegisteringGuardAsync(Visitor visitor, string toStatus, string? reason, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(visitor.CreatedBy, out var guardUserId))
+        {
+            return;
+        }
+
+        var unitNumber = await db.Units.AsNoTracking()
+            .Where(u => u.Id == visitor.HostUnitId)
+            .Select(u => u.UnitNumber)
+            .FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
+
+        var approved = string.Equals(toStatus, VisitorStatuses.Approved, StringComparison.Ordinal);
+        var placeholders = new Dictionary<string, string>
+        {
+            ["visitorName"] = visitor.Name,
+            ["unitNumber"] = unitNumber,
+            ["reason"] = string.IsNullOrWhiteSpace(reason) ? string.Empty : $"Reason: {reason}.",
+        };
+
+        await notifications.EnqueueAsync(
+            new NotificationRequest(
+                approved ? NotificationTemplateKeys.VisitorApproved : NotificationTemplateKeys.VisitorRejected,
+                guardUserId,
+                visitor.CommunityId,
+                Placeholders: placeholders),
+            cancellationToken);
     }
 
     /// <summary>

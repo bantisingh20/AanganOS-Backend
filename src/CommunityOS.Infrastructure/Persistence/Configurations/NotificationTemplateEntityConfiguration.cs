@@ -86,6 +86,23 @@ public sealed class NotificationTemplateEntityConfiguration : IEntityTypeConfigu
             NotificationCategories.Visitor,
             NotificationCategoryKind.Optional);
 
+        // Walk-in APPROVED → tells the GUARD who registered it to admit the visitor (Task 20261008).
+        // Optional "visitor" category; fills {visitorName}, {unitNumber}.
+        yield return Platform(
+            NotificationTemplateKeys.VisitorApproved,
+            "Walk-in approved",
+            "The resident approved {visitorName} for unit {unitNumber}. You can admit the visitor.",
+            NotificationCategories.Visitor,
+            NotificationCategoryKind.Optional);
+
+        // Walk-in REJECTED → tells the GUARD who registered it not to admit (Task 20261008).
+        yield return Platform(
+            NotificationTemplateKeys.VisitorRejected,
+            "Walk-in rejected",
+            "The resident rejected {visitorName} for unit {unitNumber}. Do not admit the visitor. {reason}",
+            NotificationCategories.Visitor,
+            NotificationCategoryKind.Optional);
+
         // Incident escalated to responders (Req 27.2, Task 16.3). MANDATORY "responder" category —
         // security staff must always receive an escalation regardless of opt-out (Req 20.4).
         yield return Platform(

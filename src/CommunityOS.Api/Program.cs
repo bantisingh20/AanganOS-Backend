@@ -132,38 +132,20 @@ app.MapSecurityOpsEndpoints();
 // is paginated and tenant/self-scoped by the global query filter (Req 28.5, 30.5, 31.5).
 app.MapParcelEndpoints();
 
-// Helpdesk + Maintenance module endpoints (Task 21.4) â€” HTTP surface over the Phase 5 services
-// (IHelpdeskService, IMaintenanceService). Tickets with configurable classification + attachments,
-// assignment / SLA / status lifecycle / feedback / analytics (Req 32.x-34.x); the asset register
-// with QR identification + lifecycle, preventive/corrective work orders with parts/labour +
-// equipment history, inspections / AMC contracts / meter readings (Req 35.x-37.x). Every endpoint
-// carries [RequirePermission] on its seeded (Action, ResourceType); mutations use the "write" rate-
-// limit policy; list endpoints are paginated and tenant-scoped (resident self-scoped for tickets) by
-// the global query filter. The SLA-breach escalation, preventive-work-order generation and AMC-
-// expiry-reminder sweeps stay worker-only and are intentionally off the HTTP surface.
 app.MapHelpdeskEndpoints();
 app.MapMaintenanceEndpoints();
 
-// Amenities + Parking module endpoints (Task 24.3) — HTTP surface over the Phase 6 services
-// (IAmenityService, IParkingService). Amenities/slots/booking-rules/blackout-dates, the booking
-// lifecycle with capacity concurrency, resident events with capacity-bounded registration (Req
-// 38.x/39.x/41.4-41.5); parking zones/slots/assignments/violations/occupancy, guest parking and
-// EV-charging reservations with the one-active-per-slot guarantee (Req 40.x/41.1-41.3). Every
-// endpoint carries [RequirePermission] on its seeded (Action, ResourceType); mutations use the
-// "write" rate-limit policy; lists are tenant-scoped by the global query filter.
 app.MapAmenityEndpoints();
 app.MapParkingEndpoints();
 
-// Community notice board (MVP notices slice) — read-only HTTP surface over IAnnouncementService.
-// The list + get-by-id endpoints carry [RequirePermission(View, Announcement)]; reads are
-// tenant-scoped by the global query filter.
+
 app.MapAnnouncementEndpoints();
 
-// DEV-ONLY data seed (Development + DevSeed:Enabled). Creates the SQL schema via EnsureCreated
-// (applying the HasData master-data/permission/notification-template seeds) and provisions a
-// minimal usable dataset (org + community + admin role + admin user) so the mobile apps can log
-// in and exercise the modules against a fresh Docker SQL database. Never runs outside Development;
-// no-ops when the admin already exists. Production uses migrations + real provisioning.
+// In-app notification inbox (Task 20261008) — authenticated-only, self-scoped by RecipientUserId.
+// Reads the recipient's own transactional-outbox rows (written by the common EnqueueAsync helper)
+// as a readable list + read-state; no per-feature save path.
+app.MapNotificationEndpoints();
+
 if (app.Environment.IsDevelopment())
 {
     var devSeed = new CommunityOS.Api.DevSeed.DevSeedOptions();

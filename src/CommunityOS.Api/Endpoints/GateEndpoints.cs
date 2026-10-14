@@ -187,6 +187,8 @@ public static class GateEndpoints
                 string? status,
                 string? category,
                 Guid? hostUnitId,
+                DateTime? fromDate,
+                DateTime? toDate,
                 int? page,
                 int? pageSize,
                 IGateService gate,
@@ -196,6 +198,16 @@ public static class GateEndpoints
                 AddEquals(filters, "status", status);
                 AddEquals(filters, "category", category);
                 AddEquals(filters, "hostUnitId", hostUnitId);
+                // Registered-date window (createdAtUtc). The client sends start-of-day/end-of-day for
+                // a "today" default; >= from and <= to scope the walk-in list to that range.
+                if (fromDate is { } f)
+                {
+                    filters.Add(new FilterTerm("createdAtUtc", FilterOperator.GreaterThanOrEqual, f.ToUniversalTime().ToString("o")));
+                }
+                if (toDate is { } t)
+                {
+                    filters.Add(new FilterTerm("createdAtUtc", FilterOperator.LessThanOrEqual, t.ToUniversalTime().ToString("o")));
+                }
 
                 var data = await gate.ListVisitorsAsync(BuildParameters(page, pageSize, search, sort, filters), ct);
                 return Results.Ok(ApiResult<PagedData<VisitorDto>>.Ok(data, string.Empty));

@@ -82,4 +82,15 @@ public class NotificationOutboxMessage : TenantOwnedEntity
 
     /// <summary>Last error message from a failed dispatch attempt (diagnostic only; never contains PII).</summary>
     public string? LastError { get; set; }
+
+    /// <summary>
+    /// In-app inbox read state (Task 20261008). The same outbox row doubles as the recipient's
+    /// readable in-app notification: <c>false</c> until the recipient opens/acknowledges it. Drives
+    /// the unread badge. Independent of the push <see cref="Status"/> (a push may be Sent while the
+    /// in-app item is still unread).
+    /// </summary>
+    public bool IsRead { get; set; }
+
+    /// <summary>When the recipient marked this notification read (UTC), else null.</summary>
+    public DateTime? ReadAtUtc { get; set; }
 }
