@@ -123,6 +123,31 @@ public static class HelpdeskEndpoints
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "TicketAttachment"));
 
+        // GET /{id}/comments — the ticket's discussion thread, oldest-first (tenant/self-scoped).
+        group.MapGet("/{id:guid}/comments", async (
+                Guid id,
+                IHelpdeskService helpdesk,
+                CancellationToken ct) =>
+            {
+                var items = await helpdesk.GetTicketCommentsAsync(id, ct);
+                return Results.Ok(ApiResult<IReadOnlyList<TicketCommentDto>>.Ok(items, string.Empty));
+            })
+            .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "TicketComment"));
+
+        // POST /{id}/comments — post a comment to the ticket (resident or staff).
+        group.MapPost("/{id:guid}/comments", async (
+                Guid id,
+                AddCommentBody body,
+                IHelpdeskService helpdesk,
+                CancellationToken ct) =>
+            {
+                var dto = await helpdesk.AddTicketCommentAsync(id, new AddTicketCommentRequest(body.Body!), ct);
+                return Results.Ok(ApiResult<TicketCommentDto>.Ok(dto, string.Empty));
+            })
+            .AddEndpointFilter<DataAnnotationsValidationFilter>()
+            .RequireRateLimiting(RateLimitingExtensions.WritePolicy)
+            .WithMetadata(new RequirePermissionAttribute(PermissionAction.Create, "TicketComment"));
+
         // POST /{id}/assign — assign/re-assign the ticket to maintenance staff (Req 33.1, 33.4, 33.5).
         group.MapPost("/{id:guid}/assign", async (
                 Guid id,
@@ -224,6 +249,13 @@ public static class HelpdeskEndpoints
         public string? Priority { get; init; }
 
         public IReadOnlyList<Guid>? AttachmentFileIds { get; init; }
+    }
+
+    public sealed class AddCommentBody
+    {
+        [Required(AllowEmptyStrings = false, ErrorMessage = "body is required")]
+        [MaxLength(2000)]
+        public string? Body { get; init; }
     }
 
     public sealed class AssignTicketBody

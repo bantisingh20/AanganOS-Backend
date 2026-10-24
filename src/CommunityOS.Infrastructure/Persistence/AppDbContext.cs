@@ -266,6 +266,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     // this same registration surface.
     public DbSet<Ticket> Tickets => Set<Ticket>();
     public DbSet<TicketAttachment> TicketAttachments => Set<TicketAttachment>();
+    public DbSet<TicketComment> TicketComments => Set<TicketComment>();
 
     // Maintenance module — asset register (Task 21.1, Req 35.1-35.4). Asset is a TenantOwnedEntity
     // but NOT IUnitScoped — it is community infrastructure (a lift, pump, DG set, ...), so the

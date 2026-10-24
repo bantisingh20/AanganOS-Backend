@@ -36,6 +36,26 @@ builder.AddObservability();
 // "RateLimiting" section (no hardcoded permit counts / windows).
 builder.Services.AddApiRateLimiting(builder.Configuration);
 
+// CORS for the browser-based superadmin portal (CommunityOS-Admin). Origins come from the "Cors"
+// config section (no wildcard — credentials/auth header require explicit origins). The portal sends
+// the Authorization header and reads X-Correlation-Id, so both are allowed/exposed. Same-origin
+// callers (mobile app over native fetch) are unaffected; CORS only gates browser cross-origin calls.
+const string CorsPolicy = "AdminPortal";
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(CorsPolicy, policy =>
+    {
+        if (corsOrigins.Length > 0)
+        {
+            policy.WithOrigins(corsOrigins)
+                .AllowAnyHeader()
+                .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .WithExposedHeaders("X-Correlation-Id");
+        }
+    });
+});
+
 var app = builder.Build();
 
 // --- Middleware pipeline, outermost â†’ innermost (design "Request lifecycle"): ---
@@ -47,6 +67,11 @@ app.UseExceptionEnvelope();
 
 // 1. Correlation id established once; shared via HttpContext + response header + log scope (Req 10.1).
 app.UseCorrelationId();
+
+// 1b. CORS — before HTTPS redirect/auth so the browser preflight (OPTIONS) is answered directly and
+//     isn't 307-redirected or rejected by the permission gate. Only the configured portal origins
+//     pass; everything else gets no CORS headers (browser blocks it).
+app.UseCors(CorsPolicy);
 
 if (app.Environment.IsDevelopment())
 {
@@ -90,6 +115,8 @@ app.MapFileEndpoints();
 // Identity/RBAC/Auth endpoints (Task 5.4) â€” HTTP surface over the 5.1/5.2/5.3 services.
 // Auth: login/forgot/reset are anonymous (no permission metadata); logout is authenticated-only.
 app.MapAuthEndpoints();
+// Public self-service onboarding: anonymous create-your-own-community + admin (community-scoped).
+app.MapOnboardingEndpoints();
 // RBAC management: every endpoint carries [RequirePermission] on its (Action, ResourceType) (Req 4.1).
 app.MapUserEndpoints();
 app.MapRoleEndpoints();

@@ -65,6 +65,14 @@ public static class DevDataSeeder
             sp.GetRequiredService<IPermissionCatalog>(),
             ct);
 
+        // Ensure the "CommunityAdmin" role exists on every start (idempotent), so onboarding can
+        // assign it immediately. Upserted: new permissions are picked up automatically.
+        await EnsureCommunityAdminRoleAsync(
+            db,
+            sp.GetRequiredService<IRoleService>(),
+            sp.GetRequiredService<IPermissionCatalog>(),
+            ct);
+
         // 2) Idempotency / dev-credential gate. The superadmin logs in with their PHONE number.
         //    If the superadmin phone already exists, re-stamp its password and stop (idempotent).
         var existingAdmin = await db.Users.IgnoreQueryFilters()
@@ -101,8 +109,9 @@ public static class DevDataSeeder
             communityId = community.Id;
         }
 
-        // Superadmin role granting the ENTIRE permission catalog (the HasData-seeded set) — full
-        // access. (The "Resident" and "Security" roles are seeded separately below / at startup.)
+        // PowerUser role granting the ENTIRE permission catalog (the HasData-seeded set) — full
+        // platform access. Assigned with CommunityId=null below → the platform "see everything" admin.
+        // (The "Resident", "Security" and "CommunityAdmin" roles are seeded separately / at startup.)
         var catalogEntries = await catalog.ListAsync(cancellationToken: ct);
         var grants = catalogEntries.Select(p => new PermissionGrant(p.Action, p.ResourceType)).ToList();
         var role = await roles.DefineAsync(
@@ -111,9 +120,9 @@ public static class DevDataSeeder
         // Seed the Security/Watch role (visitor + gate operations). Resident role is ensured earlier.
         await EnsureSecurityRoleAsync(db, roles, catalog, ct);
 
-        // The superadmin is a PURE platform principal: a phone-based login with a PLATFORM-WIDE role
-        // assignment (CommunityId = null → the super-admin claim / full access). It is deliberately
-        // NOT linked to any Resident and NOT a member of any unit's household.
+        // The power user is a PURE platform principal: a phone-based login with a PLATFORM-WIDE role
+        // assignment (CommunityId = null → the super-admin claim / full cross-community access). It is
+        // deliberately NOT linked to any Resident and NOT a member of any unit's household.
         var admin = await users.CreateAsync(
             new CreateUserRequest(Email: null, Phone: options.AdminPhone, hasher.Hash(options.AdminPassword)), ct);
 
@@ -122,7 +131,7 @@ public static class DevDataSeeder
         await SeedAnnouncementsAsync(db, communityId.Value, ct);
 
         logger.LogInformation(
-            "Dev seed complete: community {CommunityId}, superadmin {Phone} with {GrantCount} permission grants.",
+            "Dev seed complete: community {CommunityId}, power user {Phone} with {GrantCount} permission grants.",
             communityId, options.AdminPhone, grants.Count);
     }
 
@@ -206,6 +215,9 @@ public static class DevDataSeeder
             (PermissionAction.View, "Visitor"),
             (PermissionAction.Approve, "Visitor"),
             (PermissionAction.Create, "RecurringVisitor"),
+            // Residents manage their OWN recurring visitors (daily help/staff): the screen lists +
+            // revokes them, so View is required alongside Create (self-scoped by the tenant filter).
+            (PermissionAction.View, "RecurringVisitor"),
             (PermissionAction.View, "Parcel"),
             (PermissionAction.Create, "ParcelAuthorization"),
             (PermissionAction.View, "ParcelAuthorization"),
@@ -214,6 +226,8 @@ public static class DevDataSeeder
             (PermissionAction.View, "Ticket"),
             (PermissionAction.Create, "TicketAttachment"),
             (PermissionAction.View, "TicketAttachment"),
+            (PermissionAction.View, "TicketComment"),
+            (PermissionAction.Create, "TicketComment"),
             (PermissionAction.View, "Announcement"),
             (PermissionAction.View, "Community"),
             // File_Service upload + download. Residents capture photos (visitor pass, ticket
@@ -304,6 +318,130 @@ public static class DevDataSeeder
 
         await roles.DefineAsync(new DefineRoleRequest("Security", RoleScope.Platform, null, grants), ct);
     }
+
+    /// <summary>
+    /// Idempotently define a platform "CommunityAdmin" role: full management of a single community's
+    /// data (units, wings, residents, announcements, users/roles within scope), but NOT platform-level
+    /// operations (creating organizations, cross-community visibility). The role is ASSIGNED per-user
+    /// with a specific CommunityId to scope them; the role definition itself is platform-scoped (like
+    /// Resident/Security) so it can be reused across communities. Upserted on every startup so new
+    /// resource types are included automatically.
+    /// </summary>
+    private static async Task EnsureCommunityAdminRoleAsync(
+        AppDbContext db, IRoleService roles, IPermissionCatalog catalog, CancellationToken ct)
+    {
+        var existingId = await db.Roles.IgnoreQueryFilters()
+            .Where(r => r.Name == "CommunityAdmin")
+            .Select(r => (Guid?)r.Id)
+            .FirstOrDefaultAsync(ct);
+
+        // Admin-level permissions for one community. Covers community structure (hierarchy/units),
+        // people (residents, household, emergency contacts), gate (visitors/passes/entry-exit),
+        // parcels, helpdesk, announcements, user/role management within the community, files, and
+        // master-data reads. Excludes: Organization Create/Edit/Delete, platform-wide config.
+        var wanted = new (PermissionAction Action, string ResourceType)[]
+        {
+            // Community
+            (PermissionAction.View, "Community"),
+            (PermissionAction.Edit, "Community"),
+            // Hierarchy / Wings
+            (PermissionAction.View, "HierarchyNode"),
+            (PermissionAction.Create, "HierarchyNode"),
+            (PermissionAction.Edit, "HierarchyNode"),
+            (PermissionAction.Delete, "HierarchyNode"),
+            // Units
+            (PermissionAction.View, "Unit"),
+            (PermissionAction.Create, "Unit"),
+            (PermissionAction.Edit, "Unit"),
+            (PermissionAction.Delete, "Unit"),
+            (PermissionAction.Export, "Unit"),
+            // Residents
+            (PermissionAction.View, "Resident"),
+            (PermissionAction.Create, "Resident"),
+            (PermissionAction.Edit, "Resident"),
+            (PermissionAction.Delete, "Resident"),
+            (PermissionAction.Approve, "Resident"),
+            // Household / contacts
+            (PermissionAction.View, "HouseholdMember"),
+            (PermissionAction.Create, "HouseholdMember"),
+            (PermissionAction.View, "EmergencyContact"),
+            (PermissionAction.Create, "EmergencyContact"),
+            // Assets
+            (PermissionAction.View, "Vehicle"),
+            (PermissionAction.Create, "Vehicle"),
+            (PermissionAction.View, "Pet"),
+            (PermissionAction.Create, "Pet"),
+            // Gate / visitors
+            (PermissionAction.View, "Visitor"),
+            (PermissionAction.Create, "Visitor"),
+            (PermissionAction.Edit, "Visitor"),
+            (PermissionAction.Approve, "Visitor"),
+            (PermissionAction.View, "VisitPass"),
+            (PermissionAction.Create, "VisitPass"),
+            (PermissionAction.View, "RecurringVisitor"),
+            (PermissionAction.Create, "RecurringVisitor"),
+            (PermissionAction.View, "EntryExitEvent"),
+            (PermissionAction.Create, "EntryExitEvent"),
+            // Security ops
+            (PermissionAction.View, "WatchlistEntry"),
+            (PermissionAction.Create, "WatchlistEntry"),
+            (PermissionAction.Edit, "WatchlistEntry"),
+            (PermissionAction.View, "GuardShift"),
+            (PermissionAction.View, "Incident"),
+            (PermissionAction.Create, "Incident"),
+            (PermissionAction.View, "SosAlert"),
+            (PermissionAction.Create, "SosAlert"),
+            // Parcels
+            (PermissionAction.View, "Parcel"),
+            (PermissionAction.Create, "Parcel"),
+            (PermissionAction.Edit, "Parcel"),
+            (PermissionAction.View, "CustodyLocation"),
+            (PermissionAction.Create, "CustodyLocation"),
+            (PermissionAction.View, "CustodyTimelineEntry"),
+            // Helpdesk
+            (PermissionAction.View, "Ticket"),
+            (PermissionAction.Create, "Ticket"),
+            (PermissionAction.Edit, "Ticket"),
+            (PermissionAction.View, "TicketAttachment"),
+            (PermissionAction.Create, "TicketAttachment"),
+            (PermissionAction.View, "TicketComment"),
+            (PermissionAction.Create, "TicketComment"),
+            // Announcements
+            (PermissionAction.View, "Announcement"),
+            (PermissionAction.Create, "Announcement"),
+            (PermissionAction.Edit, "Announcement"),
+            (PermissionAction.Delete, "Announcement"),
+            // User/role management within community
+            (PermissionAction.View, "User"),
+            (PermissionAction.Create, "User"),
+            (PermissionAction.Edit, "User"),
+            (PermissionAction.View, "Role"),
+            (PermissionAction.Create, "Role"),
+            (PermissionAction.View, "Permission"),
+            (PermissionAction.Assign, "Role"),
+            // Files + master data
+            (PermissionAction.View, "File"),
+            (PermissionAction.Create, "File"),
+            (PermissionAction.View, "MasterData"),
+        };
+
+        var catalogEntries = await catalog.ListAsync(cancellationToken: ct);
+        var available = catalogEntries.Select(p => (p.Action, p.ResourceType)).ToHashSet();
+        var grants = wanted
+            .Where(w => available.Contains((w.Action, w.ResourceType)))
+            .Select(w => new PermissionGrant(w.Action, w.ResourceType))
+            .ToList();
+
+        var request = new DefineRoleRequest("CommunityAdmin", RoleScope.Platform, null, grants);
+        if (existingId is { } id)
+        {
+            await roles.UpdateAsync(id, request, ct);
+        }
+        else
+        {
+            await roles.DefineAsync(request, ct);
+        }
+    }
 }
 
 /// <summary>Dev seed inputs (dev-only; bound from the "DevSeed" config section in Program.cs).</summary>
@@ -315,8 +453,9 @@ public sealed class DevSeedOptions
     public string OrganizationName { get; set; } = "CommunityOS Demo Org";
     public string CommunityName { get; set; } = "CommunityOS Demo Community";
     public string CommunityType { get; set; } = "apartment_society";
-    public string AdminRoleName { get; set; } = "Superadmin";
-    /// <summary>The superadmin logs in with their PHONE number incl. country code (login identifier).</summary>
+    /// <summary>The platform-wide "see everything" role (CommunityId=null assignment). Was "Superadmin".</summary>
+    public string AdminRoleName { get; set; } = "PowerUser";
+    /// <summary>The power user logs in with their PHONE number incl. country code (login identifier).</summary>
     public string AdminPhone { get; set; } = "+910000000000";
     public string AdminPassword { get; set; } = "123";
 }

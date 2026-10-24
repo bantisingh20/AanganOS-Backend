@@ -13,6 +13,7 @@ using CommunityOS.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using DomainTicket = CommunityOS.Domain.Helpdesk.Ticket;
 using DomainTicketAttachment = CommunityOS.Domain.Helpdesk.TicketAttachment;
+using DomainTicketComment = CommunityOS.Domain.Helpdesk.TicketComment;
 using DomainTicketStatuses = CommunityOS.Domain.Helpdesk.TicketStatuses;
 using DomainTicketClassification = CommunityOS.Domain.Helpdesk.TicketClassification;
 
@@ -578,6 +579,71 @@ public sealed class HelpdeskService(
         return attachments.Select(ToDto).ToList();
     }
 
+    public async Task<IReadOnlyList<TicketCommentDto>> GetTicketCommentsAsync(Guid ticketId, CancellationToken cancellationToken = default)
+    {
+        // Defense-in-depth: listing comments needs View on TicketComment.
+        if (!await authorizationGuard.HasPermissionAsync(PermissionAction.View, "TicketComment", cancellationToken))
+        {
+            throw new ForbiddenException("You do not have permission to view ticket comments.");
+        }
+
+        // Tenant + resident self-scope filtered AsNoTracking read riding the
+        // (CommunityId, TicketId, CreatedAtUtc) index — a foreign-tenant / non-own-unit ticket's
+        // comments are hidden by the filter, so an unknown/foreign id yields an empty list (no leak).
+        // Oldest-first so the thread reads as a conversation; id tie-break for stability.
+        var comments = await db.TicketComments.AsNoTracking()
+            .Where(c => c.TicketId == ticketId)
+            .OrderBy(c => c.CreatedAtUtc).ThenBy(c => c.Id)
+            .ToListAsync(cancellationToken);
+
+        return comments.Select(ToDto).ToList();
+    }
+
+    public async Task<TicketCommentDto> AddTicketCommentAsync(
+        Guid ticketId, AddTicketCommentRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Defense-in-depth: posting a comment needs Create on TicketComment.
+        if (!await authorizationGuard.HasPermissionAsync(PermissionAction.Create, "TicketComment", cancellationToken))
+        {
+            throw new ForbiddenException("You do not have permission to comment on a ticket.");
+        }
+
+        var body = RequireText(request.Body, "body", "A comment is required.");
+        if (body.Length > 2000)
+        {
+            throw new ValidationException("body", "A comment can be at most 2000 characters.");
+        }
+
+        // Load the parent ticket tenant + resident-self scoped: anchors the comment in the ticket's
+        // community + unit AND enforces "comment only on your own unit's ticket" (a foreign/other-unit
+        // id is hidden by the filter → not found; no bespoke predicate).
+        var ticket = await db.Tickets.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ticketId, cancellationToken)
+            ?? throw new NotFoundException("The ticket was not found in your authorized communities.");
+
+        authorizationGuard.EnsureCommunityAuthorized(ticket.CommunityId);
+
+        var comment = new DomainTicketComment
+        {
+            CommunityId = ticket.CommunityId,
+            UnitId = ticket.UnitId, // mirror the ticket's unit so resident self-scope restricts reads
+            TicketId = ticket.Id,
+            Body = body,
+        };
+        db.TicketComments.Add(comment);
+
+        await audit.AppendAsync(
+            new AuditEntry("Create", "TicketComment", comment.Id.ToString(), ticket.CommunityId, Detail: null),
+            cancellationToken);
+
+        // Single SaveChanges commits the comment + audit atomically. CreatedBy/CreatedAtUtc are stamped
+        // by the audit SaveChanges interceptor, so the returned DTO re-reads them off the tracked entity.
+        await db.SaveChangesAsync(cancellationToken);
+
+        return ToDto(comment);
+    }
+
     /// <summary>
     /// Resolve the auto-assignment target for a new ticket's category (Req 33.1) from the editable
     /// <c>Ticket_Assignment_Rule</c> list — each entry's code is a <c>category-&gt;userId</c> pair
@@ -873,4 +939,7 @@ public sealed class HelpdeskService(
 
     private static TicketAttachmentDto ToDto(DomainTicketAttachment a) =>
         new(a.Id, a.CommunityId, a.TicketId, a.FileId);
+
+    private static TicketCommentDto ToDto(DomainTicketComment c) =>
+        new(c.Id, c.CommunityId, c.TicketId, c.Body, c.CreatedBy, c.CreatedAtUtc);
 }

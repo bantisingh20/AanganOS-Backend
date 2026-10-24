@@ -116,6 +116,25 @@ public sealed record TicketAttachmentDto(
     Guid TicketId,
     Guid FileId);
 
+/// <summary>One comment in a ticket's discussion thread. Author + time come from the audit columns.</summary>
+/// <param name="Id">The comment id.</param>
+/// <param name="CommunityId">Owning community.</param>
+/// <param name="TicketId">The ticket this comment belongs to.</param>
+/// <param name="Body">The comment text.</param>
+/// <param name="CreatedBy">The acting user id that posted the comment (audit column), or null.</param>
+/// <param name="CreatedAtUtc">When the comment was posted (audit column).</param>
+public sealed record TicketCommentDto(
+    Guid Id,
+    Guid CommunityId,
+    Guid TicketId,
+    string Body,
+    string? CreatedBy,
+    DateTime CreatedAtUtc);
+
+/// <summary>Add a comment to a ticket (resident or staff). The body is the only input.</summary>
+/// <param name="Body">The comment text. Required.</param>
+public sealed record AddTicketCommentRequest(string Body);
+
 /// <summary>
 /// Raise a helpdesk ticket for the resident's OWN unit (Req 32.1, 32.3). The resident supplies the
 /// host unit, a title + description, a configurable category / optional subcategory / optional

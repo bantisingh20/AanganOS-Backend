@@ -83,6 +83,11 @@ public sealed class PermissionEntityConfiguration : IEntityTypeConfiguration<Per
             // (Task 16.2), not gated here. Seeded as editable catalog data so roles can grant them.
             ("VisitPass", [PermissionAction.View, PermissionAction.Create, PermissionAction.Edit, PermissionAction.Delete]),
             ("Visitor", [PermissionAction.View, PermissionAction.Create, PermissionAction.Edit, PermissionAction.Approve, PermissionAction.Delete]),
+            // Recurring visitors (Task 16, Req 25.2): a resident defines regular visitors (daily help /
+            // staff) for their own unit (Create), lists + manages them (View), and revokes (modelled as
+            // a Create grant on the revoke endpoint). This MUST be in the catalog or the
+            // /recurring-visitors endpoints 403 for everyone but superadmin (the bug this fixes).
+            ("RecurringVisitor", [PermissionAction.View, PermissionAction.Create]),
             // Entry/exit events (Task 16.2, Req 25.3-25.5). A guard records an ENTRY and a matching
             // EXIT at the gate — BOTH gate on (Create, EntryExitEvent) (the exit closes the open
             // entry, modelled as another create). View lists the gate log. This MUST be in the catalog
@@ -152,6 +157,11 @@ public sealed class PermissionEntityConfiguration : IEntityTypeConfiguration<Per
             // attachments on their own unit's tickets. No Delete here (an attachment is retained with
             // its ticket's history). Seeded as editable catalog data so roles can grant them.
             ("TicketAttachment", [PermissionAction.View, PermissionAction.Create]),
+            // Helpdesk ticket comments — the discussion thread. A resident or staff member reads the
+            // thread (View) and posts a message (Create). No Edit/Delete — comments are retained with
+            // the ticket's history. MUST be in the catalog or the comment endpoints 403 for everyone
+            // but the PowerUser (the catalog-gap class of bug). Seeded as editable catalog data.
+            ("TicketComment", [PermissionAction.View, PermissionAction.Create]),
             // Maintenance module — asset register (Task 21.1, Req 35.1-35.4). A Facility Manager
             // registers an asset with Create (Req 35.1), lists/reads the register scoped to their
             // authorized communities with View (Req 35.3), edits an asset / drives its lifecycle

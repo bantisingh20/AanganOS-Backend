@@ -464,6 +464,10 @@ public static class DependencyInjection
         services.TryAddScoped<IOtpDeliverer, LoggingOtpDeliverer>(); // Notification_Service (Task 7.1) replaces later.
         services.AddScoped<IAuthService, AuthService>();
 
+        // Public self-service onboarding (create your own community + admin). Scoped: it uses the
+        // request-scoped IAuthService to log the new admin in after provisioning.
+        services.AddScoped<CommunityOS.Application.Onboarding.IOnboardingService, CommunityOS.Infrastructure.Onboarding.OnboardingService>();
+
         // Fail-closed default; the request pipeline (Task 2.2) replaces this with a principal-derived
         // context. TryAdd so a host registering the real one first always wins.
         services.TryAddScoped<ITenantContext, NullTenantContext>();

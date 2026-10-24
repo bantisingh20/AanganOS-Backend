@@ -56,6 +56,12 @@ public interface IHelpdeskService
     /// </summary>
     Task<IReadOnlyList<TicketAttachmentDto>> GetTicketAttachmentsAsync(Guid ticketId, CancellationToken cancellationToken = default);
 
+    /// <summary>List a ticket's comments oldest-first (View on TicketComment), tenant/self-scoped.</summary>
+    Task<IReadOnlyList<TicketCommentDto>> GetTicketCommentsAsync(Guid ticketId, CancellationToken cancellationToken = default);
+
+    /// <summary>Add a comment to a ticket (Create on TicketComment), tenant/self-scoped. Returns it. Audited.</summary>
+    Task<TicketCommentDto> AddTicketCommentAsync(Guid ticketId, AddTicketCommentRequest request, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Assign or re-assign a ticket to a maintenance-staff member (Req 33.1, 33.2, 33.4, 33.5).
     /// Requires the <c>Assign</c> permission on <c>Ticket</c> + an authorized community. The target
