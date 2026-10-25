@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.IdentityModel.Tokens.Jwt;
 using CommunityOS.Api.Security;
 using CommunityOS.Api.Validation;
+using CommunityOS.Application.Abstractions;
 using CommunityOS.Application.Auth;
 using CommunityOS.Application.Exceptions;
 using CommunityOS.Contracts.Envelope;
@@ -129,6 +130,28 @@ public static class AuthEndpoints
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
 
+        // POST /api/v1/devices — authenticated-only, no permission gate. Registers (upserts) this
+        // device's OneSignal push target for the signed-in user so notifications can reach it
+        // (Req 11.1). The mobile app calls this post-login and whenever the subscription id changes.
+        // The owning user is taken from the token (sub), never the body. NOT under the auth
+        // rate-limit (it's a post-auth call, not a brute-force target); uses the write limiter.
+        app.MapPost("/api/v1/devices", async (
+                RegisterDeviceBody body,
+                ITenantContext tenant,
+                IAuthService auth,
+                CancellationToken ct) =>
+            {
+                if (!Guid.TryParse(tenant.UserId, out var userId))
+                {
+                    throw new UnauthenticatedException();
+                }
+
+                await auth.RegisterDeviceAsync(userId, body.OneSignalPlayerId, body.Platform, ct);
+                return Results.Ok(ApiResult<RegisterDeviceResponse>.Ok(new RegisterDeviceResponse(true), string.Empty));
+            })
+            .AddEndpointFilter<DataAnnotationsValidationFilter>()
+            .RequireRateLimiting(RateLimitingExtensions.WritePolicy);
+
         return app;
     }
 
@@ -150,6 +173,21 @@ public static class AuthEndpoints
         [MaxLength(32)]
         public string? Platform { get; init; }
     }
+
+    /// <summary>Body for <c>POST /api/v1/devices</c> — the device's OneSignal push target + platform.</summary>
+    public sealed class RegisterDeviceBody
+    {
+        [Required(AllowEmptyStrings = false, ErrorMessage = "oneSignalPlayerId is required")]
+        [MaxLength(128)]
+        public string OneSignalPlayerId { get; init; } = string.Empty;
+
+        /// <summary>Optional device platform: "android" / "ios" / "web".</summary>
+        [MaxLength(32)]
+        public string? Platform { get; init; }
+    }
+
+    /// <summary>Result of registering a device push target.</summary>
+    public sealed record RegisterDeviceResponse(bool Registered);
 
     /// <summary>
     /// Login/refresh success payload: the access token + its expiry + roles + the refresh token for

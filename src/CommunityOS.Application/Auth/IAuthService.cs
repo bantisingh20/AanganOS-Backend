@@ -64,6 +64,20 @@ public interface IAuthService
     /// (Req 2.4).
     /// </summary>
     Task ResetPasswordAsync(PasswordResetConfirm request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Register (upsert) a push target for an ALREADY-authenticated user, outside the login flow
+    /// (Req 11.1). The mobile app calls this when the OneSignal subscription id becomes available
+    /// after login or changes on the device. Idempotent: re-registering the same id refreshes its
+    /// LastSeen; a player id previously owned by another user is re-pointed to this user (one target
+    /// → one user, Req 11.3). The owning <paramref name="userId"/> comes from the authenticated
+    /// principal (never a request body), so a caller can only register a device to themselves.
+    /// </summary>
+    Task RegisterDeviceAsync(
+        Guid userId,
+        string oneSignalPlayerId,
+        string? platform,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>

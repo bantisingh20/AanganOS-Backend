@@ -310,6 +310,48 @@ public sealed class AuthService(
             _ => DevicePlatform.Unknown,
         };
 
+    public async Task RegisterDeviceAsync(
+        Guid userId,
+        string oneSignalPlayerId,
+        string? platform,
+        CancellationToken cancellationToken = default)
+    {
+        var playerId = oneSignalPlayerId?.Trim();
+        if (string.IsNullOrEmpty(playerId))
+        {
+            throw new ValidationException("oneSignalPlayerId", "oneSignalPlayerId is required.");
+        }
+
+        var now = clock.UtcNow;
+        var devicePlatform = ParsePlatform(platform);
+
+        // Upsert by the globally-unique player id (one push target → one user, Req 11.3). This is the
+        // same device-registration done on the login path, exposed for the post-login /devices call.
+        var existing = await db.Set<Device>()
+            .FirstOrDefaultAsync(d => d.OneSignalPlayerId == playerId, cancellationToken);
+        if (existing is null)
+        {
+            db.Set<Device>().Add(new Device
+            {
+                UserId = userId,
+                Platform = devicePlatform,
+                OneSignalPlayerId = playerId,
+                IsActive = true,
+                LastSeenUtc = now,
+            });
+        }
+        else
+        {
+            // Re-point to this user (shared device / re-register) and refresh.
+            existing.UserId = userId;
+            existing.Platform = devicePlatform;
+            existing.IsActive = true;
+            existing.LastSeenUtc = now;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task LogoutAsync(string tokenId, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(tokenId))
