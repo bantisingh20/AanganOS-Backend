@@ -125,34 +125,46 @@ public sealed class RoleService(AppDbContext db, IAuditService audit, IPageSizeP
         return role is null ? null : ToDto(role, role.RolePermissions.Select(rp => rp.Permission!));
     }
 
-    public Task<PagedData<RoleDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<RoleDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        // The global soft-delete filter excludes archived roles from ordinary lists (Req 3.7).
-        // Project grants in the same query (no N+1) — the list projection is evaluated in SQL.
-        return db.Roles.AsNoTracking()
-            .Select(r => new RoleProjection(
-                r.Id, r.Name, r.Scope, r.CommunityId, r.IsDeleted,
-                r.RolePermissions.Select(rp => new PermissionGrant(rp.Permission!.Action, rp.Permission.ResourceType)).ToList()))
-            .ToPagedResultAsync(parameters, ProjectionConfig, p =>
-                    new RoleDto(p.Id, p.Name, p.Scope, p.CommunityId, p.Permissions, p.IsDeleted),
+        // Page over the ENTITY query (db.Roles) with the entity-typed QueryConfig so the sort/filter
+        // selectors translate to SQL (ordering by a projected record's property does NOT translate —
+        // that was the InvalidOperationException). The DTO projection runs AFTER the SQL page is read.
+        // Grants are loaded for just that page in ONE IN-query (no N+1, no nested-collection-in-COUNT).
+        var page = await db.Roles.AsNoTracking()
+            .ToPagedResultAsync(
+                parameters, QueryConfig,
+                r => new RoleDto(r.Id, r.Name, r.Scope, r.CommunityId, [], r.IsDeleted),
                 pageSizePolicy, executor, cancellationToken);
+
+        var ids = page.Items.Select(r => r.Id).ToList();
+        if (ids.Count == 0)
+        {
+            return page;
+        }
+
+        var grantsByRole = (await db.RolePermissions.AsNoTracking()
+                .Where(rp => ids.Contains(rp.RoleId))
+                .Select(rp => new { rp.RoleId, rp.Permission!.Action, rp.Permission.ResourceType })
+                .ToListAsync(cancellationToken))
+            .GroupBy(x => x.RoleId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyCollection<PermissionGrant>)g
+                    .Select(x => new PermissionGrant(x.Action, x.ResourceType)).ToList());
+
+        return new PagedData<RoleDto>
+        {
+            Page = page.Page,
+            PageSize = page.PageSize,
+            TotalCount = page.TotalCount,
+            Items = page.Items
+                .Select(r => grantsByRole.TryGetValue(r.Id, out var g) ? r with { Permissions = g } : r)
+                .ToList(),
+        };
     }
-
-    // Allow-list for the projected shape used by ListAsync (same fields as QueryConfig).
-    private static readonly ListQueryConfiguration<RoleProjection> ProjectionConfig =
-        new ListQueryConfiguration<RoleProjection>()
-            .WithDefaultSort(r => r.Name)
-            .Sortable("name", r => r.Name)
-            .Sortable("scope", r => r.Scope)
-            .Filterable("scope", r => r.Scope)
-            .Filterable("communityId", r => r.CommunityId)
-            .Searchable(r => r.Name);
-
-    private sealed record RoleProjection(
-        Guid Id, string Name, RoleScope Scope, Guid? CommunityId, bool IsDeleted,
-        IReadOnlyCollection<PermissionGrant> Permissions);
 
     /// <summary>
     /// Resolve the requested (Action, ResourceType) grants to catalog permissions in one query

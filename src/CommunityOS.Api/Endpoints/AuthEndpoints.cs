@@ -100,6 +100,20 @@ public static class AuthEndpoints
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
 
+        // POST /api/v1/auth/password/verify-otp — anonymous. Checks the OTP for the SAME identifier the
+        // user entered WITHOUT consuming it — lets the verify screen tell valid from invalid before the
+        // user picks a new password. Returns { valid: bool }; no account enumeration (unknown → false).
+        group.MapPost("/password/verify-otp", async (
+                VerifyOtpBody body,
+                IAuthService auth,
+                CancellationToken ct) =>
+            {
+                var valid = await auth.VerifyPasswordResetOtpAsync(
+                    new PasswordResetOtpCheck(body.Identifier, body.Code), ct);
+                return Results.Ok(ApiResult<VerifyOtpResponse>.Ok(new VerifyOtpResponse(valid), string.Empty));
+            })
+            .AddEndpointFilter<DataAnnotationsValidationFilter>();
+
         // POST /api/v1/auth/password/reset — anonymous. Valid, unexpired, unused OTP + new password
         // → password updated and OTP invalidated (Req 2.3); an expired/used OTP surfaces as the
         // service's validation error through the exception middleware (Req 2.4).
@@ -165,6 +179,19 @@ public static class AuthEndpoints
     }
 
     public sealed record ForgotPasswordResponse(string Message);
+
+    public sealed class VerifyOtpBody
+    {
+        [Required(AllowEmptyStrings = false, ErrorMessage = "identifier is required")]
+        [MaxLength(256)]
+        public string Identifier { get; init; } = string.Empty;
+
+        [Required(AllowEmptyStrings = false, ErrorMessage = "code is required")]
+        [MaxLength(32)]
+        public string Code { get; init; } = string.Empty;
+    }
+
+    public sealed record VerifyOtpResponse(bool Valid);
 
     public sealed class ResetPasswordBody
     {

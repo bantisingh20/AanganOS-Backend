@@ -30,6 +30,7 @@ public static class OnboardingEndpoints
             {
                 var result = await onboarding.CreateCommunityAsync(
                     new CreateCommunityOnboardingRequest(
+                        body.OrganizationName,
                         body.CommunityName,
                         body.CommunityType,
                         body.AdminName,
@@ -38,13 +39,12 @@ public static class OnboardingEndpoints
                         body.AdminPassword),
                     ct);
 
+                // Approval gate: the account is created PENDING (no login session). The portal shows a
+                // "we'll be in touch" message; a PowerUser must activate the admin before they can sign in.
                 var response = new OnboardingResponse(
                     result.CommunityId,
                     result.CommunityName,
-                    result.Login.AccessToken,
-                    result.Login.ExpiresAtUtc,
-                    result.Login.Roles,
-                    result.Login.RefreshToken);
+                    "Thanks for registering. Our team will review your request and activate your account shortly.");
 
                 return Results.Ok(ApiResult<OnboardingResponse>.Ok(response, string.Empty));
             })
@@ -55,6 +55,10 @@ public static class OnboardingEndpoints
 
     public sealed class CreateCommunityBody
     {
+        [Required(AllowEmptyStrings = false, ErrorMessage = "organizationName is required")]
+        [MaxLength(256)]
+        public string OrganizationName { get; init; } = string.Empty;
+
         [Required(AllowEmptyStrings = false, ErrorMessage = "communityName is required")]
         [MaxLength(256)]
         public string CommunityName { get; init; } = string.Empty;
@@ -80,12 +84,12 @@ public static class OnboardingEndpoints
         public string AdminPassword { get; init; } = string.Empty;
     }
 
-    /// <summary>The created community + a ready-to-use login session (same token shape as /auth/login).</summary>
+    /// <summary>
+    /// The created community's identity + a status message. The account is PENDING approval (no login
+    /// session is returned) — the admin can sign in only after a PowerUser activates them.
+    /// </summary>
     public sealed record OnboardingResponse(
         Guid CommunityId,
         string CommunityName,
-        string AccessToken,
-        DateTime ExpiresAtUtc,
-        IReadOnlyCollection<string> Roles,
-        string RefreshToken);
+        string Message);
 }

@@ -361,6 +361,9 @@ public static class DevDataSeeder
             (PermissionAction.Edit, "Resident"),
             (PermissionAction.Delete, "Resident"),
             (PermissionAction.Approve, "Resident"),
+            // Resident self-onboarding join requests (approve/reject the pending queue).
+            (PermissionAction.View, "JoinRequest"),
+            (PermissionAction.Approve, "JoinRequest"),
             // Household / contacts
             (PermissionAction.View, "HouseholdMember"),
             (PermissionAction.Create, "HouseholdMember"),

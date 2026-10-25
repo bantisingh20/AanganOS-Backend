@@ -345,20 +345,62 @@ public sealed class AuthService(
         var expiryMinutes = await config.GetIntAsync(
             AuthConfigKeys.OtpExpiryMinutes, _auth.OtpExpiryMinutes, cancellationToken: cancellationToken);
 
-        var code = GenerateNumericCode(_auth.OtpLength);
+        // DEV ONLY: a configured fixed OTP (e.g. "123456") lets the reset flow be tested without a
+        // delivery channel. It is STILL stored hashed (never plaintext) and verified the same way;
+        // it just isn't random and isn't delivered. Empty in prod → a random code + real delivery.
+        var devFixed = _auth.DevFixedOtp?.Trim();
+        var useDevOtp = !string.IsNullOrEmpty(devFixed);
+        var code = useDevOtp ? devFixed! : GenerateNumericCode(_auth.OtpLength);
 
         db.OtpTokens.Add(new OtpToken
         {
             UserId = user.Id,
             PurposeType = OtpPurpose.PasswordReset,
+            // Hashed with the ASP.NET PasswordHasher (PBKDF2 + per-value salt) — one-way, like a
+            // password. The plaintext OTP is never persisted or logged.
             HashedCode = passwordHasher.Hash(code),
             ExpiresAtUtc = clock.UtcNow.AddMinutes(expiryMinutes),
         });
         await db.SaveChangesAsync(cancellationToken);
 
-        // Deliver to the user's registered contact (Req 2.1). The deliverer is the only place the
-        // plaintext code appears; it must not be logged.
-        await otpDeliverer.DeliverAsync(identifier, code, cancellationToken);
+        // In dev-fixed mode we deliberately DON'T deliver (no SMS/email/notification) — the tester
+        // already knows the fixed code. In normal mode, deliver to the user's registered contact
+        // (Req 2.1); the deliverer is the only place the plaintext code appears (never logged).
+        if (!useDevOtp)
+        {
+            await otpDeliverer.DeliverAsync(identifier, code, cancellationToken);
+        }
+    }
+
+    public async Task<bool> VerifyPasswordResetOtpAsync(PasswordResetOtpCheck request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.Identifier) || string.IsNullOrWhiteSpace(request.Code))
+        {
+            return false;
+        }
+
+        var identifier = request.Identifier.Trim();
+        var user = await FindByIdentifierAsync(identifier, cancellationToken);
+        // No account enumeration: an unknown identifier is "invalid code", not a distinct error.
+        if (user is null)
+        {
+            return false;
+        }
+
+        var now = clock.UtcNow;
+
+        // Same candidate set + constant-time hash verify as the reset — but we DO NOT consume the OTP
+        // (UsedAtUtc stays null) so the user can still complete the reset on the next screen.
+        var candidates = await db.OtpTokens.AsNoTracking()
+            .Where(o => o.UserId == user.Id &&
+                        o.PurposeType == OtpPurpose.PasswordReset &&
+                        o.UsedAtUtc == null &&
+                        o.ExpiresAtUtc > now)
+            .OrderByDescending(o => o.ExpiresAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return candidates.Any(o => passwordHasher.Verify(o.HashedCode, request.Code.Trim()));
     }
 
     public async Task ResetPasswordAsync(PasswordResetConfirm request, CancellationToken cancellationToken = default)

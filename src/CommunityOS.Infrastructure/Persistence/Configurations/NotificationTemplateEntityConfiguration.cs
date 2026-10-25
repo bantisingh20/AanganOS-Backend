@@ -76,6 +76,23 @@ public sealed class NotificationTemplateEntityConfiguration : IEntityTypeConfigu
             "Account approved",
             "Hi {residentName}, your account for {communityName} has been approved.");
 
+        // Resident self-onboarding — notify the community admins a request needs review.
+        yield return Platform(
+            NotificationTemplateKeys.JoinRequestSubmitted,
+            "New resident request",
+            "{name} has requested to join unit {unitNumber}. Review and approve or reject the request.");
+
+        // Resident self-onboarding — tell the requester the outcome.
+        yield return Platform(
+            NotificationTemplateKeys.JoinRequestApproved,
+            "Request approved",
+            "Your request to join {communityName} has been approved. You can now sign in.");
+
+        yield return Platform(
+            NotificationTemplateKeys.JoinRequestRejected,
+            "Request update",
+            "Your request to join {communityName} could not be approved. {reason}");
+
         // Walk-in visitor request → the host unit's residents approve/reject (Req 24.2, Task 16.1).
         // OPTIONAL "visitor" category (a resident can opt out, Req 20.3) — unlike the mandatory
         // account notices above.

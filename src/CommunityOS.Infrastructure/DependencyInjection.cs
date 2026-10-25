@@ -468,6 +468,9 @@ public static class DependencyInjection
         // request-scoped IAuthService to log the new admin in after provisioning.
         services.AddScoped<CommunityOS.Application.Onboarding.IOnboardingService, CommunityOS.Infrastructure.Onboarding.OnboardingService>();
 
+        // Resident self-onboarding + admin approval (mobile login/registration flow).
+        services.AddScoped<CommunityOS.Application.Onboarding.IResidentOnboardingService, CommunityOS.Infrastructure.Onboarding.ResidentOnboardingService>();
+
         // Fail-closed default; the request pipeline (Task 2.2) replaces this with a principal-derived
         // context. TryAdd so a host registering the real one first always wins.
         services.TryAddScoped<ITenantContext, NullTenantContext>();

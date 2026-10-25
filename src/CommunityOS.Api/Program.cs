@@ -117,6 +117,9 @@ app.MapFileEndpoints();
 app.MapAuthEndpoints();
 // Public self-service onboarding: anonymous create-your-own-community + admin (community-scoped).
 app.MapOnboardingEndpoints();
+// Resident self-onboarding (mobile): check-identifier, public community/wing/unit search, submit a
+// join request (anonymous); admin list/approve/reject (permission-gated on JoinRequest).
+app.MapResidentOnboardingEndpoints();
 // RBAC management: every endpoint carries [RequirePermission] on its (Action, ResourceType) (Req 4.1).
 app.MapUserEndpoints();
 app.MapRoleEndpoints();

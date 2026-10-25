@@ -162,6 +162,10 @@ public sealed class PermissionEntityConfiguration : IEntityTypeConfiguration<Per
             // the ticket's history. MUST be in the catalog or the comment endpoints 403 for everyone
             // but the PowerUser (the catalog-gap class of bug). Seeded as editable catalog data.
             ("TicketComment", [PermissionAction.View, PermissionAction.Create]),
+            // Resident self-onboarding join requests. A community admin reads the pending queue
+            // (View) and approves/rejects (Approve). Submission is anonymous (no grant). MUST be in
+            // the catalog or the admin endpoints 403 for everyone but PowerUser (catalog-gap rule).
+            ("JoinRequest", [PermissionAction.View, PermissionAction.Approve]),
             // Maintenance module — asset register (Task 21.1, Req 35.1-35.4). A Facility Manager
             // registers an asset with Create (Req 35.1), lists/reads the register scoped to their
             // authorized communities with View (Req 35.3), edits an asset / drives its lifecycle

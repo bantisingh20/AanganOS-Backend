@@ -49,6 +49,15 @@ public interface IAuthService
     Task RequestPasswordResetAsync(PasswordResetRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// VERIFY a password-reset OTP WITHOUT consuming it or changing anything (Req 2.3 step 2). Returns
+    /// true when the identifier has a valid, unexpired, unused OTP matching <paramref name="request"/>'s
+    /// code; false otherwise. The OTP is NOT marked used — the user still completes the reset at
+    /// <see cref="ResetPasswordAsync"/>. To avoid account enumeration, an unknown identifier returns
+    /// false (same as a wrong code) rather than erroring.
+    /// </summary>
+    Task<bool> VerifyPasswordResetOtpAsync(PasswordResetOtpCheck request, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Complete a password reset: given a valid, unexpired, unused OTP and a new password, update
     /// the password (stored as a salted hash) and invalidate the OTP (Req 2.3), then record a
     /// security event (Req 2.6). An expired or already-used OTP is rejected with a validation error
@@ -86,6 +95,9 @@ public sealed record RefreshRequest(string RefreshToken);
 
 /// <summary>A password-reset request for a registered identifier (email or phone) (Req 2.1).</summary>
 public sealed record PasswordResetRequest(string Identifier);
+
+/// <summary>Checking (not consuming) a reset OTP: the identifier + the code the user entered (Req 2.3 step 2).</summary>
+public sealed record PasswordResetOtpCheck(string Identifier, string Code);
 
 /// <summary>Completing a reset: the identifier, the OTP code the user received, and the new password (Req 2.3).</summary>
 public sealed record PasswordResetConfirm(string Identifier, string Code, string NewPassword);

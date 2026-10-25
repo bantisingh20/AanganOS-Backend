@@ -32,8 +32,7 @@ namespace CommunityOS.Infrastructure.Onboarding;
 /// </summary>
 public sealed class OnboardingService(
     IConfiguration configuration,
-    IPasswordHasher passwordHasher,
-    IAuthService authService) : IOnboardingService
+    IPasswordHasher passwordHasher) : IOnboardingService
 {
     private const string CommunityAdminRoleName = "CommunityAdmin";
 
@@ -44,23 +43,22 @@ public sealed class OnboardingService(
         ArgumentNullException.ThrowIfNull(request);
 
         // --- Trust-boundary validation (anonymous input). ---
+        var orgName = (request.OrganizationName ?? string.Empty).Trim();
         var communityName = (request.CommunityName ?? string.Empty).Trim();
         var communityType = (request.CommunityType ?? string.Empty).Trim();
         var adminName = (request.AdminName ?? string.Empty).Trim();
         var email = string.IsNullOrWhiteSpace(request.AdminEmail) ? null : request.AdminEmail.Trim();
         var phone = string.IsNullOrWhiteSpace(request.AdminPhone) ? null : request.AdminPhone.Trim();
 
+        // Organization name is now explicit input (falls back to the community name if omitted).
+        if (orgName.Length is 0) orgName = communityName;
+        if (orgName.Length is 0 or > 256) throw new ValidationException("organizationName", "Organization name is required (max 256).");
         if (communityName.Length is 0 or > 256) throw new ValidationException("communityName", "Community name is required (max 256).");
-        // The platform data model requires an owning organization per community, but onboarding
-        // treats them as one thing: the org is auto-created from the community name (not user input).
-        var orgName = communityName;
         if (communityType.Length is 0 or > 100) throw new ValidationException("communityType", "Community type is required.");
         if (adminName.Length is 0 or > 256) throw new ValidationException("adminName", "Your name is required (max 256).");
         if (email is null && phone is null) throw new ValidationException("adminIdentifier", "Provide an email or a phone number to sign in with.");
         if (string.IsNullOrEmpty(request.AdminPassword) || request.AdminPassword.Length < 6)
             throw new ValidationException("adminPassword", "Password must be at least 6 characters.");
-
-        var identifier = phone ?? email!;
 
         // --- Privileged, isolated provisioning scope (platform super-admin tenant context). ---
         var services = new ServiceCollection();
@@ -101,16 +99,19 @@ public sealed class OnboardingService(
         var user = await users.CreateAsync(
             new CreateUserRequest(email, phone, passwordHasher.Hash(request.AdminPassword)), cancellationToken);
 
-        // 4) Assign CommunityAdmin SCOPED to the new community → their JWT carries only this community
-        //    and the global tenant filter isolates them to it (never platform super-admin).
+        // 4) Assign CommunityAdmin SCOPED to the new community → once ACTIVATED their JWT carries only
+        //    this community and the global tenant filter isolates them to it (never platform super-admin).
         await userRoles.AssignAsync(user.Id, roleId, community.Id, cancellationToken);
 
-        // 5) Log them straight in via the standard path (issues access + refresh tokens, enforces the
-        //    single-active-session rule). The login re-resolves authorization, so the fresh scoped
-        //    role assignment is reflected in the token.
-        var login = await authService.LoginAsync(
-            new LoginRequest(identifier, request.AdminPassword, Platform: "web"), cancellationToken);
+        // 5) APPROVAL GATE: the account is created PENDING — suspend the login so it CANNOT sign in
+        //    until a platform PowerUser activates it (the sales-qualified gate). We do NOT issue a
+        //    login/token here. Login already rejects a non-Active user, so this is the whole gate.
+        await db.Users
+            .Where(u => u.Id == user.Id)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(u => u.Status, UserStatus.Suspended),
+                cancellationToken);
 
-        return new OnboardingResult(community.Id, community.Name, login);
+        return new OnboardingResult(community.Id, community.Name);
     }
 }

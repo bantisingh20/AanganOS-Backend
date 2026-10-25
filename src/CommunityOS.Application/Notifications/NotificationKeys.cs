@@ -25,6 +25,15 @@ public static class NotificationTemplateKeys
     /// <summary>Resident account/registration approved (Req 11.2).</summary>
     public const string ResidentApprovalApproved = "resident.approval.approved";
 
+    /// <summary>A new resident join request was submitted → notify community admins. Fills {name}, {unitNumber}.</summary>
+    public const string JoinRequestSubmitted = "joinrequest.submitted";
+
+    /// <summary>A resident join request was approved → the requester can now log in. Fills {communityName}.</summary>
+    public const string JoinRequestApproved = "joinrequest.approved";
+
+    /// <summary>A resident join request was rejected. Fills {communityName}, {reason}.</summary>
+    public const string JoinRequestRejected = "joinrequest.rejected";
+
     /// <summary>
     /// Walk-in visitor registered at the gate → notify the host unit's residents to approve/reject
     /// (Req 24.2). Category <c>visitor</c> (optional); fills {visitorName}, {category}.

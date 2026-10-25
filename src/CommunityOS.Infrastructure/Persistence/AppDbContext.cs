@@ -124,6 +124,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     // Resident (Req 15.3). All three get the (CommunityId, ...) indexes declared in their configs.
     public DbSet<Resident> Residents => Set<Resident>();
     public DbSet<HouseholdMember> HouseholdMembers => Set<HouseholdMember>();
+    public DbSet<ResidentJoinRequest> ResidentJoinRequests => Set<ResidentJoinRequest>();
     public DbSet<EmergencyContact> EmergencyContacts => Set<EmergencyContact>();
 
     // Resident communication preferences (Task 12.6). CommunicationPreference is a TenantOwnedEntity

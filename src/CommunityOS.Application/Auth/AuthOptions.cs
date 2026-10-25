@@ -32,6 +32,15 @@ public sealed class AuthOptions
     public int OtpLength { get; init; } = 6;
 
     /// <summary>
+    /// DEV ONLY: when set (e.g. "123456"), password-reset uses this FIXED code instead of a random
+    /// one and SKIPS real OTP delivery (no SMS/email/notification), so the reset flow can be tested
+    /// locally without a delivery channel. The code is still stored HASHED (never plaintext). MUST be
+    /// empty in production — set only in <c>appsettings.Development.json</c>. Empty = normal behaviour.
+    /// </summary>
+    [MaxLength(10)]
+    public string DevFixedOtp { get; init; } = string.Empty;
+
+    /// <summary>
     /// Issued access-token lifetime, in minutes. With a refresh-token flow this can be short (the
     /// client silently refreshes), so the default is 60 minutes.
     /// </summary>
