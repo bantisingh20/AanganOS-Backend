@@ -20,26 +20,21 @@ builder.Services.AddSingleton(EnvelopeJson.CreateOptions());
 // Connection string comes from configuration (Database:ConnectionString), never source.
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// Request-pipeline security: JWT bearer authentication (config-driven), principal-derived
-// request-scoped ITenantContext (replaces the fail-closed default), permission-evaluator seam.
+// Opt-in: run the notification-outbox drain INSIDE the API (Notification:RunOutboxWorkerInApi=true)
+// so a single hosted API delivers push when the host can't run a separate worker process (e.g. IIS).
+// The drain uses its own isolated super-admin-scoped provider (see ApiOutboxDrainService); the
+// request pipeline's tenant scoping is untouched. Default off — the dedicated UrbanNest.Worker drains.
+if (builder.Configuration.GetValue<bool>("Notification:RunOutboxWorkerInApi"))
+{
+    builder.Services.AddHostedService<UrbanNest.Api.Notifications.ApiOutboxDrainService>();
+}
+
 builder.Services.AddRequestPipelineSecurity(builder.Configuration);
 
-// Observability (Task 8.1): structured JSON logging with sink-level secret redaction (Req 10.1,
-// 10.4), lightweight API metrics (Req 65.6), and app + database health checks (Req 10.3). The
-// logging/health/metrics policy is config-driven (Observability + Logging:LogLevel sections).
 builder.AddObservability();
 
-// Rate limiting (Task 8.2, Req 65.5): two config-driven fixed-window policies â€” a strict "auth"
-// policy for login/forgot/reset (brute-force / enumeration targets) and a general "write" policy
-// for mutating endpoints â€” partitioned by authenticated user id else client IP. A rejection renders
-// the RATE_LIMITED envelope (429) with no limiter internals leaked. Limits come from the
-// "RateLimiting" section (no hardcoded permit counts / windows).
 builder.Services.AddApiRateLimiting(builder.Configuration);
 
-// CORS for the browser-based superadmin portal (UrbanNest-Admin). Origins come from the "Cors"
-// config section (no wildcard — credentials/auth header require explicit origins). The portal sends
-// the Authorization header and reads X-Correlation-Id, so both are allowed/exposed. Same-origin
-// callers (mobile app over native fetch) are unaffected; CORS only gates browser cross-origin calls.
 const string CorsPolicy = "AdminPortal";
 var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
@@ -58,19 +53,10 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// --- Middleware pipeline, outermost â†’ innermost (design "Request lifecycle"): ---
-// exception envelope â†’ correlation â†’ authentication â†’ tenant context (DI) â†’ authorization â†’
-// validation (endpoint filter) â†’ endpoints.
-
-// 0. Terminal exception envelope â€” outermost so it wraps everything (Req 9.1, 10.2).
 app.UseExceptionEnvelope();
 
-// 1. Correlation id established once; shared via HttpContext + response header + log scope (Req 10.1).
 app.UseCorrelationId();
 
-// 1b. CORS — before HTTPS redirect/auth so the browser preflight (OPTIONS) is answered directly and
-//     isn't 307-redirected or rejected by the permission gate. Only the configured portal origins
-//     pass; everything else gets no CORS headers (browser blocks it).
 app.UseCors(CorsPolicy);
 
 if (app.Environment.IsDevelopment())
@@ -80,26 +66,15 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// 2. Authentication â€” validate the bearer token and build the ClaimsPrincipal. The request-scoped
-//    ITenantContext (3) is then derived from that principal on first use by the data layer.
 app.UseAuthentication();
 
-// 3. Authorization â€” framework pass + our API-level permission gate (401/403 plumbing, Req 1.5/4.2).
 app.UseAuthorization();
 app.UsePermissionAuthorization();
 
-// 4. Rate limiting (Task 8.2, Req 65.5). After authentication so the per-user partition key is
-//    available (falls back to client IP for anonymous/auth endpoints); endpoints opt in to the
-//    "auth"/"write" policies via RequireRateLimiting. A rejected request short-circuits here with
-//    the RATE_LIMITED envelope (429), still wrapped by the outer exception/correlation stages.
 app.UseRateLimiter();
 
-// Health checks (Task 8.1, Req 10.3): liveness (app up), readiness (app + DB connection) and an
-// aggregate endpoint reporting both. Public, lightweight (DB check is a cheap CanConnect), paths
-// come from configuration. Replaces the old ad-hoc /health stub.
 app.MapObservabilityEndpoints();
 
-// Demo endpoints exercise the protected + validation seams end-to-end for the integration tests.
 app.MapPipelineDemoEndpoints();
 
 // Config / master-data endpoints (Task 3.1): config get/set + master-data list/update.
