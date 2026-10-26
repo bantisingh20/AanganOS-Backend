@@ -9,14 +9,6 @@ using UrbanNest.Domain.Identity;
 
 namespace UrbanNest.Api.Endpoints;
 
-/// <summary>
-/// HTTP surface over the community notice board (<see cref="IAnnouncementService"/>). Residents READ
-/// the board (View-gated, active notices only); an admin (super-admin, or a role granted the
-/// Create/Edit/Delete actions) MANAGES it — publish, edit, activate/deactivate and soft-delete. Each
-/// write carries a <see cref="RequirePermissionAttribute"/> for its action on <c>Announcement</c>, so
-/// a non-admin caller is stopped by the pipeline (and a platform super-admin bypasses the gate). The
-/// board is scoped to the caller's authorized communities by the EF global tenant query filter.
-/// </summary>
 public static class AnnouncementEndpoints
 {
     public static IEndpointRouteBuilder MapAnnouncementEndpoints(this IEndpointRouteBuilder app)

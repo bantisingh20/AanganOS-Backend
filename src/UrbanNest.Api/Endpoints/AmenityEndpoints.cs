@@ -9,20 +9,7 @@ using UrbanNest.Domain.Identity;
 
 namespace UrbanNest.Api.Endpoints;
 
-/// <summary>
-/// HTTP surface over the Amenities module (<see cref="IAmenityService"/>) — the amenity master +
-/// slots + booking-rules + blackout dates (Req 38.x), the booking lifecycle with capacity
-/// concurrency (Req 39.x) and resident events with capacity-bounded registration (Req 41.4, 41.5).
-/// Mirrors the established minimal-API style of <see cref="ParcelEndpoints"/> /
-/// <see cref="MaintenanceEndpoints"/>: the <see cref="ApiResult{T}"/> envelope (Req 9.1), a
-/// <see cref="RequirePermissionAttribute"/> on the correct (Action, ResourceType) (Req 4.1),
-/// <see cref="DataAnnotationsValidationFilter"/> on write bodies (Req 9.2), the "write" rate-limit
-/// policy on every mutation (Req 65.5) and the shared paginated list infra for the amenity list.
-/// Reads are tenant-scoped (resident self-scoped where the entity is unit-scoped) by the EF global
-/// query filter; the service re-checks each permission as defense-in-depth. Acting resident/unit ids
-/// are taken from the request body (the established resident-write convention — the server still
-/// enforces authorization + self-scope on them). Task 24.3.
-/// </summary>
+
 public static class AmenityEndpoints
 {
     public static IEndpointRouteBuilder MapAmenityEndpoints(this IEndpointRouteBuilder app)

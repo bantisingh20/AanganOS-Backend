@@ -2,24 +2,7 @@ using System.Diagnostics;
 
 namespace UrbanNest.Api.Middleware;
 
-/// <summary>
-/// First functional stage of the pipeline (just inside the terminal exception envelope).
-/// Establishes the request's correlation id <b>once</b>: reuse the incoming
-/// <c>X-Correlation-Id</c> header when present and non-empty, otherwise generate one. The id is
-/// then shared three ways so everything downstream agrees on it:
-/// <list type="bullet">
-///   <item><description><see cref="HttpContext.Items"/> under <see cref="CorrelationIdKey"/> — the exception middleware reads it from here instead of generating its own.</description></item>
-///   <item><description>the <c>X-Correlation-Id</c> response header (traceability back to the client, Req 10.1).</description></item>
-///   <item><description>an <see cref="ILogger"/> scope so every log line for this request carries <c>correlationId</c>.</description></item>
-/// </list>
-/// Emits one structured log entry per request on completion with correlation id, endpoint, acting
-/// user (when authenticated) and the outcome status code (Req 10.1), and records the request's
-/// outcome + duration to <see cref="ApiMetrics"/> for API metrics (Req 65.6).
-///
-/// Secret redaction is enforced at the log sink by the Task 8.1 redacting logger provider, so even
-/// though this stage logs only method/path/status/user/timing (never bodies, headers or tokens),
-/// any accidental secret in a log line is scrubbed on the way out.
-/// </summary>
+
 public sealed class CorrelationIdMiddleware(
     RequestDelegate next,
     ILogger<CorrelationIdMiddleware> logger,

@@ -54,6 +54,7 @@ public sealed class RoleService(AppDbContext db, IAuditService audit, IPageSizeP
             Name = request.Name.Trim(),
             Scope = request.Scope,
             CommunityId = request.CommunityId,
+            Surface = request.Surface,
             RolePermissions = permissions.Select(p => new RolePermission { PermissionId = p.Id }).ToList(),
         };
         db.Roles.Add(role);
@@ -83,6 +84,7 @@ public sealed class RoleService(AppDbContext db, IAuditService audit, IPageSizeP
         role.Name = request.Name.Trim();
         role.Scope = request.Scope;
         role.CommunityId = request.CommunityId;
+        role.Surface = request.Surface;
 
         // Replace the grant set wholesale: drop existing join rows, add the resolved set.
         db.RemoveRange(role.RolePermissions);

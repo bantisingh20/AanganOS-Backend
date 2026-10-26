@@ -73,6 +73,12 @@ public static class DevDataSeeder
             sp.GetRequiredService<IPermissionCatalog>(),
             ct);
 
+        await EnsureOrganizationAdminRoleAsync(
+            db,
+            sp.GetRequiredService<IRoleService>(),
+            sp.GetRequiredService<IPermissionCatalog>(),
+            ct);
+
         // 2) Idempotency / dev-credential gate. The superadmin logs in with their PHONE number.
         //    If the superadmin phone already exists, re-stamp its password and stop (idempotent).
         var existingAdmin = await db.Users.IgnoreQueryFilters()
@@ -115,7 +121,7 @@ public static class DevDataSeeder
         var catalogEntries = await catalog.ListAsync(cancellationToken: ct);
         var grants = catalogEntries.Select(p => new PermissionGrant(p.Action, p.ResourceType)).ToList();
         var role = await roles.DefineAsync(
-            new DefineRoleRequest(options.AdminRoleName, RoleScope.Platform, null, grants), ct);
+            new DefineRoleRequest(options.AdminRoleName, RoleScope.Platform, null, grants, RoleSurface.Admin), ct);
 
         // Seed the Security/Watch role (visitor + gate operations). Resident role is ensured earlier.
         await EnsureSecurityRoleAsync(db, roles, catalog, ct);
@@ -316,7 +322,7 @@ public static class DevDataSeeder
             .Select(w => new PermissionGrant(w.Action, w.ResourceType))
             .ToList();
 
-        await roles.DefineAsync(new DefineRoleRequest("Security", RoleScope.Platform, null, grants), ct);
+        await roles.DefineAsync(new DefineRoleRequest("Security", RoleScope.Platform, null, grants, RoleSurface.App), ct);
     }
 
     /// <summary>
@@ -435,7 +441,73 @@ public static class DevDataSeeder
             .Select(w => new PermissionGrant(w.Action, w.ResourceType))
             .ToList();
 
-        var request = new DefineRoleRequest("CommunityAdmin", RoleScope.Platform, null, grants);
+        var request = new DefineRoleRequest("CommunityAdmin", RoleScope.Platform, null, grants, RoleSurface.Admin);
+        if (existingId is { } id)
+        {
+            await roles.UpdateAsync(id, request, ct);
+        }
+        else
+        {
+            await roles.DefineAsync(request, ct);
+        }
+    }
+
+    private static async Task EnsureOrganizationAdminRoleAsync(
+        AppDbContext db, IRoleService roles, IPermissionCatalog catalog, CancellationToken ct)
+    {
+        var existingId = await db.Roles.IgnoreQueryFilters()
+            .Where(r => r.Name == "OrganizationAdmin")
+            .Select(r => (Guid?)r.Id)
+            .FirstOrDefaultAsync(ct);
+
+        var wanted = new (PermissionAction Action, string ResourceType)[]
+        {
+            (PermissionAction.View, "Organization"),
+            (PermissionAction.Edit, "Organization"),
+            (PermissionAction.View, "Community"),
+            (PermissionAction.Create, "Community"),
+            (PermissionAction.Edit, "Community"),
+            (PermissionAction.View, "HierarchyNode"),
+            (PermissionAction.Create, "HierarchyNode"),
+            (PermissionAction.Edit, "HierarchyNode"),
+            (PermissionAction.Delete, "HierarchyNode"),
+            (PermissionAction.View, "Unit"),
+            (PermissionAction.Create, "Unit"),
+            (PermissionAction.Edit, "Unit"),
+            (PermissionAction.Delete, "Unit"),
+            (PermissionAction.Export, "Unit"),
+            (PermissionAction.View, "Resident"),
+            (PermissionAction.Create, "Resident"),
+            (PermissionAction.Edit, "Resident"),
+            (PermissionAction.Delete, "Resident"),
+            (PermissionAction.Approve, "Resident"),
+            (PermissionAction.View, "Announcement"),
+            (PermissionAction.Create, "Announcement"),
+            (PermissionAction.Edit, "Announcement"),
+            (PermissionAction.Delete, "Announcement"),
+            (PermissionAction.View, "Ticket"),
+            (PermissionAction.Create, "Ticket"),
+            (PermissionAction.Edit, "Ticket"),
+            (PermissionAction.View, "User"),
+            (PermissionAction.Create, "User"),
+            (PermissionAction.Edit, "User"),
+            (PermissionAction.View, "Role"),
+            (PermissionAction.Assign, "Role"),
+            (PermissionAction.View, "Permission"),
+            (PermissionAction.View, "File"),
+            (PermissionAction.Create, "File"),
+            (PermissionAction.View, "MasterData"),
+            (PermissionAction.View, "Audit"),
+        };
+
+        var catalogEntries = await catalog.ListAsync(cancellationToken: ct);
+        var available = catalogEntries.Select(p => (p.Action, p.ResourceType)).ToHashSet();
+        var grants = wanted
+            .Where(w => available.Contains((w.Action, w.ResourceType)))
+            .Select(w => new PermissionGrant(w.Action, w.ResourceType))
+            .ToList();
+
+        var request = new DefineRoleRequest("OrganizationAdmin", RoleScope.Platform, null, grants, RoleSurface.Admin);
         if (existingId is { } id)
         {
             await roles.UpdateAsync(id, request, ct);

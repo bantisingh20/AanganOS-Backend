@@ -9,32 +9,14 @@ using UrbanNest.Contracts.Envelope;
 
 namespace UrbanNest.Api.Endpoints;
 
-/// <summary>
-/// HTTP surface over Auth_Service (Task 5.2) — Req 1.1, 1.3, 2.1, 2.3. Every response uses the
-/// <see cref="ApiResult{T}"/> envelope (Req 9.1) and request bodies validate at the trust boundary
-/// (Req 9.2).
-///
-/// <para><b>Authorization.</b> login / forgot / reset are pre-authentication flows: they carry NO
-/// <c>RequirePermission</c> metadata, so the permission-authorization middleware passes them
-/// through untouched and anonymous callers reach them. Logout is authenticated-only: it has no
-/// permission gate either (any authenticated user may end their own session) but it rejects an
-/// anonymous caller and derives the session id (<c>jti</c>) from the validated token's claims —
-/// never from the request body, so one user can't revoke another's session.</para>
-/// </summary>
+
 public static class AuthEndpoints
 {
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
-        // The strict "auth" rate-limit policy (Task 8.2, Req 65.5) covers the whole auth group —
-        // login / forgot / reset are the brute-force & account-enumeration targets, and logout is
-        // throttled on the same partition. Partitioned by client IP for these pre-auth flows, so a
-        // credential-stuffing source is capped regardless of which identifier it tries.
         var group = app.MapGroup("/api/v1/auth")
             .RequireRateLimiting(RateLimitingExtensions.AuthPolicy);
 
-        // POST /api/v1/auth/login — anonymous. Valid credentials → token + roles (Req 1.1);
-        // invalid credentials / locked account surface as the service's AppException, which the
-        // exception middleware renders as the UNAUTHENTICATED envelope (Req 1.2). No token leaks.
         group.MapPost("/login", async (
                 LoginBody body,
                 IAuthService auth,
@@ -47,10 +29,6 @@ public static class AuthEndpoints
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
 
-        // POST /api/v1/auth/refresh — anonymous (pre-auth, like login). Swaps a valid refresh token
-        // for a fresh access token + rotated refresh token (silent re-auth, no password). An
-        // invalid/expired/revoked token surfaces as UNAUTHENTICATED → the client clears + routes to
-        // login. Shares the auth rate-limit.
         group.MapPost("/refresh", async (
                 RefreshBody body,
                 IAuthService auth,
@@ -62,9 +40,6 @@ public static class AuthEndpoints
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
 
-        // POST /api/v1/auth/logout — authenticated-only, no permission gate. Revokes the current
-        // session using the jti from the authenticated principal (Req 1.3). Idempotent in the
-        // service, so a repeat is a no-op.
         group.MapPost("/logout", async (
                 HttpContext http,
                 IAuthService auth,
@@ -87,8 +62,6 @@ public static class AuthEndpoints
                 return Results.Ok(ApiResult<LogoutResponse>.Ok(new LogoutResponse(true), string.Empty));
             });
 
-        // POST /api/v1/auth/password/forgot — anonymous. Always succeeds (no account enumeration,
-        // Req 2.1): an unknown identifier returns the same 200 without sending anything.
         group.MapPost("/password/forgot", async (
                 ForgotPasswordBody body,
                 IAuthService auth,
@@ -101,9 +74,6 @@ public static class AuthEndpoints
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
 
-        // POST /api/v1/auth/password/verify-otp — anonymous. Checks the OTP for the SAME identifier the
-        // user entered WITHOUT consuming it — lets the verify screen tell valid from invalid before the
-        // user picks a new password. Returns { valid: bool }; no account enumeration (unknown → false).
         group.MapPost("/password/verify-otp", async (
                 VerifyOtpBody body,
                 IAuthService auth,
@@ -130,11 +100,6 @@ public static class AuthEndpoints
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
 
-        // POST /api/v1/devices — authenticated-only, no permission gate. Registers (upserts) this
-        // device's OneSignal push target for the signed-in user so notifications can reach it
-        // (Req 11.1). The mobile app calls this post-login and whenever the subscription id changes.
-        // The owning user is taken from the token (sub), never the body. NOT under the auth
-        // rate-limit (it's a post-auth call, not a brute-force target); uses the write limiter.
         app.MapPost("/api/v1/devices", async (
                 RegisterDeviceBody body,
                 ITenantContext tenant,
@@ -189,11 +154,7 @@ public static class AuthEndpoints
     /// <summary>Result of registering a device push target.</summary>
     public sealed record RegisterDeviceResponse(bool Registered);
 
-    /// <summary>
-    /// Login/refresh success payload: the access token + its expiry + roles + the refresh token for
-    /// silent re-auth. Never the password hash. The refresh token is a one-time-use opaque string
-    /// the client stores securely and swaps at <c>/auth/refresh</c> when the access token expires.
-    /// </summary>
+
     public sealed record LoginResponse(
         string AccessToken,
         DateTime ExpiresAtUtc,

@@ -6,17 +6,7 @@ using UrbanNest.Contracts.Serialization;
 
 namespace UrbanNest.Api.Middleware;
 
-/// <summary>
-/// Terminal middleware that catches unhandled exceptions and renders the standard error
-/// envelope. Known <see cref="AppException"/>s map to their carried <see cref="ErrorCode"/>,
-/// HTTP status, and (for validation) per-field reasons. Any other exception is logged with the
-/// correlation id and collapsed to a generic INTERNAL_ERROR whose body exposes no stack trace,
-/// SQL, or internal message (Req 10.2). Every response carries a correlationId (Req 10.1).
-///
-/// The correlation id is established once by <see cref="CorrelationIdMiddleware"/> and read back
-/// from <see cref="HttpContext.Items"/>; when this middleware runs alone (e.g. unit tests with no
-/// correlation stage) it falls back to reusing the incoming header or generating one.
-/// </summary>
+
 public sealed class ExceptionHandlingMiddleware
 {
     /// <summary>Header carrying a client/upstream correlation id to reuse when present.</summary>

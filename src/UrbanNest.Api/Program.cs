@@ -21,6 +21,11 @@ if (builder.Configuration.GetValue<bool>("Notification:RunOutboxWorkerInApi"))
     builder.Services.AddHostedService<UrbanNest.Api.Notifications.ApiOutboxDrainService>();
 }
 
+if (builder.Configuration.GetValue<bool>("MessageOutboxWorker:RunInApi"))
+{
+    builder.Services.AddHostedService<UrbanNest.Infrastructure.Messaging.MessageOutboxDrainService>();
+}
+
 builder.Services.AddRequestPipelineSecurity(builder.Configuration);
 
 builder.AddObservability();
@@ -73,6 +78,10 @@ app.MapConfigEndpoints();
 
 // Audit read endpoint (Task 4.1): tenant-scoped, paginated audit-log query (View-gated).
 app.MapAuditEndpoints();
+app.MapMessageOutboxEndpoints();
+app.MapNotificationOutboxAdminEndpoints();
+app.MapMenuEndpoints();
+app.MapAdminUserEndpoints();
 
 app.MapFileEndpoints();
 
