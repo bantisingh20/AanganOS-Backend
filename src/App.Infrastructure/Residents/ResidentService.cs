@@ -3,6 +3,7 @@ using App.Application.Abstractions.Security;
 using App.Application.Audit;
 using App.Application.Config;
 using App.Application.Exceptions;
+using App.Application.Files;
 using App.Application.Notifications;
 using App.Application.Querying;
 using App.Application.Residents;
@@ -15,42 +16,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace App.Infrastructure.Residents;
 
-/// <summary>
-/// EF-backed <see cref="IResidentService"/> (Req 15.1–15.3, 15.5).
-///
-/// <para><b>Configurable type (Req 15.1).</b> <c>ResidentType</c> is validated at runtime against
-/// the editable <c>Resident_Type</c> master-data list resolved for the resident's own community (so
-/// a per-community override applies) — not a frozen enum. Verification status is never caller-set:
-/// it starts at <c>pending</c> (the Task 12.3 workflow owns transitions).</para>
-///
-/// <para><b>Same-community association (Req 15.2).</b> When associating a resident with a unit, the
-/// unit's community is loaded (tenant-scoped read) and a cross-community link is rejected with a
-/// validation error — the same convention UnitService/HierarchyService use for same-community
-/// checks.</para>
-///
-/// <para><b>Resident self-view (Req 5.4, 66.3).</b> <see cref="HouseholdMember"/> is
-/// <c>IUnitScoped</c>, so the DbContext resident self-scope filter restricts a resident principal to
-/// their own household rows automatically — this service adds no bespoke predicate for that.</para>
-///
-/// <para><b>Audit + tenant scope.</b> Create/update/delete and the association/contact mutations each
-/// append an <see cref="AuditEntry"/> (Req 6.1); reads are tenant-scoped by the global filter
-/// (Req 5.2) and use <c>AsNoTracking</c>; delete is a soft delete that stays traceable (Req 15.5).
-/// The optimistic-concurrency token mismatch on edit is mapped to CONFLICT centrally in
-/// <c>AppDbContext.SaveChangesAsync</c> (Req 22.4), so there is no per-service catch here.</para>
-///
-/// <para><b>Verification/approval workflow (Task 12.3, Req 17.x, 22.3).</b> <see cref="ApproveAsync"/>,
-/// <see cref="RejectAsync"/> and <see cref="ResubmitForVerificationAsync"/> drive the
-/// <c>VerificationStatus</c> state machine (pending → verified/rejected; rejected → pending). Each is
-/// gated on the <c>Approve</c> permission + authorized community via <see cref="IAuthorizationGuard"/>
-/// (defense-in-depth on top of the Task 12.7 endpoint gate, Req 17.5), validates the transition (an
-/// invalid one → CONFLICT), appends the audit record (approver/timestamp/reason, Req 17.2/17.3), and
-/// enqueues the resident notification through <see cref="INotificationService"/> as a transactional
-/// outbox row — all committed by a single <c>SaveChangesAsync</c> so the status change and the
-/// notification are atomic (Req 17.4): a rollback leaves no notification. Approve-once under
-/// concurrency (Req 22.3) rests on the resident's <c>RowVersion</c>: the first save bumps the token
-/// and the concurrent loser's save trips the row-version mismatch mapped centrally to CONFLICT — a
-/// DB-level guard, never a read-then-write pre-check.</para>
-/// </summary>
+
 public sealed class ResidentService(
     AppDbContext db,
     IAuditService audit,
@@ -61,15 +27,12 @@ public sealed class ResidentService(
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
     ITenantContext tenantContext,
+    IFileService files,
     App.Application.Auth.IPasswordHasher passwordHasher)
     : IResidentService
 {
-    /// <summary>Default role assigned to a newly-created resident login when none is specified.</summary>
     private const string DefaultResidentRoleName = "Resident";
-    // Allow-list for the resident list endpoint (Req 15.4). verificationStatus and residentType are
-    // filterable+sortable so the "pending residents in this community" verification queue hits the
-    // (CommunityId, VerificationStatus) index at scale. No arbitrary client fields reach the query
-    // (steering: no hardcoding, injection-safe).
+
     private static readonly ListQueryConfiguration<Resident> QueryConfig =
         new ListQueryConfiguration<Resident>()
             .WithDefaultSort(r => r.Name)
@@ -89,9 +52,7 @@ public sealed class ResidentService(
         RequireName(request.Name);
         await RequireValidResidentTypeAsync(request.ResidentType, request.CommunityId, cancellationToken);
 
-        // A caller who can approve residents (admin / PowerUser creating from the portal) produces a
-        // pre-verified resident — no separate approval step. A self-registering resident (no Approve
-        // grant) still starts pending and goes through the verification queue (Req 15.1, Task 12.3).
+       
         var createdByApprover = await authorizationGuard.HasPermissionAsync(PermissionAction.Approve, "Resident", cancellationToken);
 
         var resident = new Resident
@@ -104,7 +65,7 @@ public sealed class ResidentService(
             ResidentType = request.ResidentType.Trim(),
             PhotoFileId = string.IsNullOrWhiteSpace(request.PhotoFileId) ? null : request.PhotoFileId.Trim(),
             VerificationStatus = createdByApprover
-                ? ResidentVerificationStatuses.Verified
+                ? ResidentVerificationStatuses.Draft
                 : ResidentVerificationStatuses.Pending,
         };
 
@@ -268,8 +229,7 @@ public sealed class ResidentService(
 
     public async Task<IReadOnlyList<EmergencyContactDto>> ListEmergencyContactsAsync(Guid residentId, CancellationToken cancellationToken = default)
     {
-        // Confirm the resident is visible to the caller (tenant-scoped) before returning children,
-        // so a cross-tenant/unknown id gets a not-found rather than an empty list.
+        
         var exists = await db.Residents.AsNoTracking().AnyAsync(r => r.Id == residentId, cancellationToken);
         if (!exists)
         {
@@ -286,9 +246,7 @@ public sealed class ResidentService(
 
     public async Task<IReadOnlyList<UnitHouseholdMemberDto>> GetUnitHouseholdAsync(Guid unitId, CancellationToken cancellationToken = default)
     {
-        // Active household members of the unit joined to their resident (name + type). Tenant-scoped
-        // by the global filter on both sets; a resident-self-scoped principal only ever sees their own
-        // unit's rows. Projected AsNoTracking — no over-fetch. Owners first, then by join date.
+        
         var members = await (
             from h in db.HouseholdMembers.AsNoTracking()
             where h.UnitId == unitId && h.EndDate == null
@@ -303,17 +261,13 @@ public sealed class ResidentService(
 
     public async Task<IReadOnlyList<ResidentHouseholdUnitDto>> GetResidentHouseholdAsync(Guid residentId, CancellationToken cancellationToken = default)
     {
-        // Confirm the resident is visible to the caller before returning children (unknown/cross-tenant
-        // → not-found, not an empty list) — same convention as ListEmergencyContactsAsync.
+        
         var exists = await db.Residents.AsNoTracking().AnyAsync(r => r.Id == residentId, cancellationToken);
         if (!exists)
         {
             throw new NotFoundException("Resident not found.");
         }
-
-        // The resident's OWN active unit memberships joined to the unit (number/type/status/floor).
-        // HouseholdMember has no Unit navigation, so join db.Units on UnitId (mirrors GetUnitHousehold).
-        // Tenant/self-scoped by the global filter on both sets; AsNoTracking — no over-fetch.
+        
         var units = await (
             from h in db.HouseholdMembers.AsNoTracking()
             where h.ResidentId == residentId && h.EndDate == null
@@ -328,26 +282,20 @@ public sealed class ResidentService(
 
     public async Task<ResidentMeDto> GetMeAsync(CancellationToken cancellationToken = default)
     {
-        // "Who am I": the resident row linked to the current token's user (Resident.UserId == sub) —
-        // a single self-targeted lookup, never a list-and-filter. No authenticated user id, or an
-        // unparseable one, or no linked resident row (e.g. a platform superadmin) → an empty result
-        // (resident null, no units), NOT a 404, so the header falls back to the login identifier.
+       
         if (!Guid.TryParse(tenantContext.UserId, out var userId))
         {
             return new ResidentMeDto(null, []);
         }
 
-        // Match on UserId (not the first tenant row): admins/guards can see several residents, so the
-        // own row must be the one whose login == this user. Tenant/self-scoped by the global filter.
+       
         var resident = await db.Residents.AsNoTracking()
             .FirstOrDefaultAsync(r => r.UserId == userId, cancellationToken);
         if (resident is null)
         {
             return new ResidentMeDto(null, []);
         }
-
-        // The signed-in resident's OWN active unit memberships (+ unit details) — same join as
-        // GetResidentHouseholdAsync, so one /me call feeds both the header name and the unit pickers.
+       
         var units = await (
             from h in db.HouseholdMembers.AsNoTracking()
             where h.ResidentId == resident.Id && h.EndDate == null
@@ -358,6 +306,86 @@ public sealed class ResidentService(
             .ToListAsync(cancellationToken);
 
         return new ResidentMeDto(ToDto(resident), units);
+    }
+
+    public async Task<ResidentDto> SubmitMyKycAsync(SubmitKycRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (!Guid.TryParse(tenantContext.UserId, out var userId))
+        {
+            throw new ForbiddenException("You must be signed in to submit verification.");
+        }
+
+        var resident = await db.Residents.FirstOrDefaultAsync(r => r.UserId == userId, cancellationToken)
+            ?? throw new NotFoundException("No resident profile is linked to your account.");
+
+        if (resident.VerificationStatus == ResidentVerificationStatuses.Verified)
+        {
+            throw new ConflictException("Your account is already verified.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.ResidentType))
+        {
+            await RequireValidResidentTypeAsync(request.ResidentType.Trim(), resident.CommunityId, cancellationToken);
+            resident.ResidentType = request.ResidentType.Trim();
+        }
+        resident.DateOfBirth = request.DateOfBirth;
+        resident.Gender = string.IsNullOrWhiteSpace(request.Gender) ? resident.Gender : request.Gender.Trim();
+        resident.MoveInDate = request.MoveInDate ?? resident.MoveInDate;
+        resident.GovtIdType = string.IsNullOrWhiteSpace(request.GovtIdType) ? resident.GovtIdType : request.GovtIdType.Trim();
+
+        var selfieId = await StorePhotoAsync(request.SelfieBase64, resident.CommunityId, resident.Id, cancellationToken);
+        if (selfieId is { } sid) resident.PhotoFileId = sid.ToString();
+        var frontId = await StorePhotoAsync(request.GovtIdFrontBase64, resident.CommunityId, resident.Id, cancellationToken);
+        if (frontId is { } fid) resident.GovtIdFrontFileId = fid.ToString();
+        var backId = await StorePhotoAsync(request.GovtIdBackBase64, resident.CommunityId, resident.Id, cancellationToken);
+        if (backId is { } bid) resident.GovtIdBackFileId = bid.ToString();
+
+        resident.VerificationStatus = ResidentVerificationStatuses.Pending;
+        resident.RejectionReason = null;
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        await audit.AppendAsync(
+            new AuditEntry("SubmitKyc", "Resident", resident.Id.ToString(), resident.CommunityId, Detail: null),
+            cancellationToken);
+
+        return ToDto(resident);
+    }
+
+    private async Task<Guid?> StorePhotoAsync(string? photoBase64, Guid communityId, Guid residentId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(photoBase64)) return null;
+
+        var raw = photoBase64.Trim();
+        var contentType = "image/png";
+        var comma = raw.IndexOf(',');
+        if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && comma > 0)
+        {
+            var header = raw[5..comma];
+            var semi = header.IndexOf(';');
+            var mime = semi > 0 ? header[..semi] : header;
+            if (mime.Length > 0) contentType = mime;
+            raw = raw[(comma + 1)..];
+        }
+
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(raw); }
+        catch (FormatException) { throw new ValidationException("photo", "The image is not valid base64 data."); }
+        if (bytes.Length == 0) return null;
+
+        using var stream = new MemoryStream(bytes);
+        var reference = await files.StoreAsync(
+            new StoreFileRequest(
+                OwningResourceType: "Resident",
+                OwningResourceId: residentId,
+                CommunityId: communityId,
+                FileName: $"resident-{residentId}.png",
+                ContentType: contentType,
+                Content: stream),
+            cancellationToken);
+        return reference.Id;
     }
 
     public async Task<ResidentLoginResult> CreateLoginAsync(Guid residentId, CreateResidentLoginRequest request, CancellationToken cancellationToken = default)
@@ -626,16 +654,7 @@ public sealed class ResidentService(
         return ToDto(member);
     }
 
-    /// <summary>
-    /// Shared verification-status transition (Task 12.3). Enforces the Approve permission + authorized
-    /// community (Req 17.5), the valid <paramref name="fromStatus"/> → <paramref name="toStatus"/>
-    /// transition (invalid → CONFLICT), stamps the status (and the rejection reason), audits the
-    /// transition (approver/timestamp from the tenant context + clock, Req 17.2/17.3), enqueues the
-    /// resident notification (Req 17.4), then commits the status change + outbox row in one
-    /// <c>SaveChangesAsync</c>. The resident's <c>RowVersion</c> makes the transition record exactly
-    /// once under concurrency: a losing concurrent save trips a row-version mismatch mapped centrally
-    /// to CONFLICT (Req 22.3) — no read-then-write gap.
-    /// </summary>
+   
     private async Task<ResidentDto> TransitionAsync(
         Guid residentId,
         string fromStatus,

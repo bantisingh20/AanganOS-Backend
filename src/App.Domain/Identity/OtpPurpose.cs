@@ -8,4 +8,7 @@ public enum OtpPurpose
 {
     /// <summary>Password reset / recovery (Req 2.1–2.4).</summary>
     PasswordReset = 0,
+
+    /// <summary>Phone verification during self-registration (keyed on phone, no user yet).</summary>
+    Registration = 1,
 }

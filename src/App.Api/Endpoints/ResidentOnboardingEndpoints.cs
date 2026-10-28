@@ -7,14 +7,7 @@ using App.Domain.Identity;
 
 namespace App.Api.Endpoints;
 
-/// <summary>
-/// HTTP surface for resident self-onboarding (mobile login/registration flow) + admin approval.
-///
-/// <para><b>Anonymous</b> (no permission metadata, under the strict "auth" rate-limit policy — they
-/// are unauthenticated surfaces): check-identifier, public community/wing/unit search, and submit a
-/// join request. <b>Admin</b> (authenticated, <c>RequirePermission</c> on <c>JoinRequest</c>): list
-/// pending requests, approve, reject.</para>
-/// </summary>
+
 public static class ResidentOnboardingEndpoints
 {
     public static IEndpointRouteBuilder MapResidentOnboardingEndpoints(this IEndpointRouteBuilder app)
@@ -87,6 +80,30 @@ public static class ResidentOnboardingEndpoints
                 return Results.Ok(ApiResult<OnboardingConfigResponse>.Ok(new OnboardingConfigResponse(enabled), string.Empty));
             });
 
+        // POST /public/register/request-otp — issue a 6-digit OTP to a phone for registration.
+        anon.MapPost("/public/register/request-otp", async (
+                RegisterOtpRequestBody body,
+                IResidentOnboardingService svc,
+                CancellationToken ct) =>
+            {
+                await svc.RequestRegistrationOtpAsync(body.Phone!, ct);
+                return Results.Ok(ApiResult<RegisterOtpVerifyResponse>.Ok(new RegisterOtpVerifyResponse(true), string.Empty));
+            })
+            .AddEndpointFilter<DataAnnotationsValidationFilter>()
+            .RequireRateLimiting(RateLimitingExtensions.AuthPolicy);
+
+        // POST /public/register/verify-otp — check a registration OTP without consuming it.
+        anon.MapPost("/public/register/verify-otp", async (
+                RegisterOtpVerifyBody body,
+                IResidentOnboardingService svc,
+                CancellationToken ct) =>
+            {
+                var valid = await svc.VerifyRegistrationOtpAsync(body.Phone!, body.Code!, ct);
+                return Results.Ok(ApiResult<RegisterOtpVerifyResponse>.Ok(new RegisterOtpVerifyResponse(valid), string.Empty));
+            })
+            .AddEndpointFilter<DataAnnotationsValidationFilter>()
+            .RequireRateLimiting(RateLimitingExtensions.AuthPolicy);
+
         // POST /residents/self-register — create a pending resident + login (anonymous).
         anon.MapPost("/residents/self-register", async (
                 SelfRegisterBody body,
@@ -94,7 +111,10 @@ public static class ResidentOnboardingEndpoints
                 CancellationToken ct) =>
             {
                 var result = await svc.SelfRegisterAsync(
-                    new SelfRegisterRequest(body.CommunityId, body.UnitId, body.Name!, body.Phone!, body.Email, body.Password!, body.PhotoBase64), ct);
+                    new SelfRegisterRequest(
+                        body.CommunityId, body.UnitId, body.Name!, body.Phone!, body.Email, body.Password!,
+                        body.Code, body.PhotoBase64, body.ResidentType, body.DateOfBirth, body.Gender,
+                        body.MoveInDate, body.GovtIdType, body.SelfieBase64, body.GovtIdFrontBase64, body.GovtIdBackBase64), ct);
                 return Results.Ok(ApiResult<SelfRegisterResult>.Ok(result, string.Empty));
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
@@ -203,6 +223,49 @@ public static class ResidentOnboardingEndpoints
         [MaxLength(128)]
         public string? Password { get; init; }
 
+        [Required(AllowEmptyStrings = false, ErrorMessage = "code is required")]
+        [MaxLength(10)]
+        public string? Code { get; init; }
+
         public string? PhotoBase64 { get; init; }
+
+        [MaxLength(100)]
+        public string? ResidentType { get; init; }
+
+        public DateOnly? DateOfBirth { get; init; }
+
+        [MaxLength(16)]
+        public string? Gender { get; init; }
+
+        public DateOnly? MoveInDate { get; init; }
+
+        [MaxLength(32)]
+        public string? GovtIdType { get; init; }
+
+        public string? SelfieBase64 { get; init; }
+
+        public string? GovtIdFrontBase64 { get; init; }
+
+        public string? GovtIdBackBase64 { get; init; }
     }
+
+    public sealed class RegisterOtpRequestBody
+    {
+        [Required(AllowEmptyStrings = false, ErrorMessage = "phone is required")]
+        [MaxLength(32)]
+        public string? Phone { get; init; }
+    }
+
+    public sealed class RegisterOtpVerifyBody
+    {
+        [Required(AllowEmptyStrings = false, ErrorMessage = "phone is required")]
+        [MaxLength(32)]
+        public string? Phone { get; init; }
+
+        [Required(AllowEmptyStrings = false, ErrorMessage = "code is required")]
+        [MaxLength(10)]
+        public string? Code { get; init; }
+    }
+
+    public sealed record RegisterOtpVerifyResponse(bool Valid);
 }

@@ -2,14 +2,7 @@ using App.Application.Auth;
 
 namespace App.Application.Onboarding;
 
-/// <summary>
-/// Resident self-onboarding + admin approval. Anonymous callers (unregistered people) can:
-/// check whether a phone already has a login, search communities by name, list a community's wings,
-/// list units under a wing, and submit a join request (community + unit + name + 4-digit PIN). A
-/// community admin then lists pending requests and approves (which provisions the resident + login +
-/// household membership so they can log in) or rejects. One active resident per unit is enforced at
-/// submit AND approve.
-/// </summary>
+
 public interface IResidentOnboardingService
 {
     /// <summary>Anonymous: does a user already exist for this phone/email? Returns only a boolean.</summary>
@@ -28,6 +21,12 @@ public interface IResidentOnboardingService
     Task<SubmitJoinRequestResult> SubmitJoinRequestAsync(SubmitJoinRequest request, CancellationToken cancellationToken = default);
 
     Task<bool> IsSelfRegistrationEnabledAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Anonymous: issue a registration OTP to a phone (rejects if the phone already has an account).</summary>
+    Task RequestRegistrationOtpAsync(string phone, CancellationToken cancellationToken = default);
+
+    /// <summary>Anonymous: verify a registration OTP for a phone WITHOUT consuming it.</summary>
+    Task<bool> VerifyRegistrationOtpAsync(string phone, string code, CancellationToken cancellationToken = default);
 
     Task<SelfRegisterResult> SelfRegisterAsync(SelfRegisterRequest request, CancellationToken cancellationToken = default);
 
@@ -68,7 +67,16 @@ public sealed record SelfRegisterRequest(
     string Phone,
     string? Email,
     string Password,
-    string? PhotoBase64 = null);
+    string? Code = null,
+    string? PhotoBase64 = null,
+    string? ResidentType = null,
+    DateOnly? DateOfBirth = null,
+    string? Gender = null,
+    DateOnly? MoveInDate = null,
+    string? GovtIdType = null,
+    string? SelfieBase64 = null,
+    string? GovtIdFrontBase64 = null,
+    string? GovtIdBackBase64 = null);
 
 public sealed record SelfRegisterResult(Guid ResidentId, LoginResult Login);
 

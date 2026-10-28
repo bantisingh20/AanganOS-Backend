@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using App.Application.Abstractions;
 using App.Application.Abstractions.Security;
 using App.Application.Auth;
@@ -10,16 +11,11 @@ using App.Domain.Identity;
 using App.Domain.Residents;
 using App.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace App.Infrastructure.Onboarding;
 
-/// <summary>
-/// Resident self-onboarding + admin approval (mobile login/registration flow). The anonymous reads +
-/// submit use the request-scoped <see cref="AppDbContext"/> with <c>IgnoreQueryFilters()</c> (the
-/// caller has no principal, so the tenant filter would otherwise hide everything) — soft-delete is
-/// re-applied explicitly in each query. Admin list/approve/reject run normally, permission-gated on
-/// <c>JoinRequest</c> and community-scoped by the authenticated admin's authorized communities.
-/// </summary>
+
 public sealed class ResidentOnboardingService(
     IPasswordHasher passwordHasher,
     AppDbContext db,
@@ -28,8 +24,12 @@ public sealed class ResidentOnboardingService(
     INotificationService notifications,
     IConfigService config,
     IFileService files,
-    IAuthService authService) : IResidentOnboardingService
+    IAuthService authService,
+    IClock clock,
+    IOptions<AuthOptions> authOptions) : IResidentOnboardingService
 {
+    private readonly AuthOptions _auth = authOptions.Value;
+
     private const int MaxSearchResults = 25;
     private const int MaxUnitResults = 100;
     private const string JoinRequestResource = "JoinRequest";
@@ -143,6 +143,78 @@ public sealed class ResidentOnboardingService(
     public Task<bool> IsSelfRegistrationEnabledAsync(CancellationToken cancellationToken = default) =>
         config.GetBoolAsync(SelfRegistrationEnabledKey, true, cancellationToken: cancellationToken);
 
+    public async Task RequestRegistrationOtpAsync(string phone, CancellationToken cancellationToken = default)
+    {
+        if (!await IsSelfRegistrationEnabledAsync(cancellationToken))
+        {
+            throw new ForbiddenException("Self-registration is disabled.");
+        }
+
+        var number = (phone ?? string.Empty).Trim();
+        if (number.Length is 0 or > 32) throw new ValidationException("phone", "A phone number is required.");
+
+        var phoneTaken = await db.Users.IgnoreQueryFilters().AnyAsync(u => u.Phone == number, cancellationToken);
+        if (phoneTaken) throw new ConflictException("An account with that phone already exists. Please sign in instead.");
+
+        var expiryMinutes = await config.GetIntAsync(
+            AuthConfigKeys.OtpExpiryMinutes, _auth.OtpExpiryMinutes, cancellationToken: cancellationToken);
+
+        var devFixed = _auth.DevFixedOtp?.Trim();
+        var useDevOtp = !string.IsNullOrEmpty(devFixed);
+        var code = useDevOtp ? devFixed! : GenerateNumericCode(_auth.OtpLength);
+
+        db.OtpTokens.Add(new OtpToken
+        {
+            Phone = number,
+            PurposeType = OtpPurpose.Registration,
+            HashedCode = passwordHasher.Hash(code),
+            ExpiresAtUtc = clock.UtcNow.AddMinutes(expiryMinutes),
+        });
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<bool> VerifyRegistrationOtpAsync(string phone, string code, CancellationToken cancellationToken = default)
+    {
+        var number = (phone ?? string.Empty).Trim();
+        var value = (code ?? string.Empty).Trim();
+        if (number.Length == 0 || value.Length == 0) return false;
+
+        var now = clock.UtcNow;
+        var candidates = await db.OtpTokens.AsNoTracking()
+            .Where(o => o.Phone == number && o.PurposeType == OtpPurpose.Registration && o.UsedAtUtc == null && o.ExpiresAtUtc > now)
+            .OrderByDescending(o => o.ExpiresAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return candidates.Any(o => passwordHasher.Verify(o.HashedCode, value));
+    }
+
+    private async Task ConsumeRegistrationOtpAsync(string phone, string code, CancellationToken cancellationToken)
+    {
+        var number = (phone ?? string.Empty).Trim();
+        var value = (code ?? string.Empty).Trim();
+        if (value.Length == 0) throw new ValidationException("code", "The verification code is required.");
+
+        var now = clock.UtcNow;
+        var candidates = await db.OtpTokens
+            .Where(o => o.Phone == number && o.PurposeType == OtpPurpose.Registration && o.UsedAtUtc == null && o.ExpiresAtUtc > now)
+            .OrderByDescending(o => o.ExpiresAtUtc)
+            .ToListAsync(cancellationToken);
+
+        var match = candidates.FirstOrDefault(o => passwordHasher.Verify(o.HashedCode, value))
+            ?? throw new ValidationException("code", "The verification code is invalid or has expired.");
+        match.UsedAtUtc = now;
+    }
+
+    private static string GenerateNumericCode(int length)
+    {
+        var digits = new char[length];
+        for (var i = 0; i < length; i++)
+        {
+            digits[i] = (char)('0' + RandomNumberGenerator.GetInt32(0, 10));
+        }
+        return new string(digits);
+    }
+
     public async Task<SelfRegisterResult> SelfRegisterAsync(SelfRegisterRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -170,6 +242,8 @@ public sealed class ResidentOnboardingService(
         var phoneTaken = await db.Users.IgnoreQueryFilters().AnyAsync(u => u.Phone == phone, cancellationToken);
         if (phoneTaken) throw new ConflictException("An account with that phone already exists. Please sign in instead.");
 
+        await ConsumeRegistrationOtpAsync(phone, request.Code ?? string.Empty, cancellationToken);
+
         var unitOccupied = await db.HouseholdMembers.IgnoreQueryFilters().AsNoTracking()
             .AnyAsync(h => !h.IsDeleted && h.UnitId == request.UnitId && h.EndDate == null, cancellationToken);
         if (unitOccupied) throw new ConflictException("This unit already has a registered resident.");
@@ -183,6 +257,7 @@ public sealed class ResidentOnboardingService(
         };
         db.Users.Add(user);
 
+        var residentType = string.IsNullOrWhiteSpace(request.ResidentType) ? "owner" : request.ResidentType.Trim();
         var resident = new Resident
         {
             CommunityId = request.CommunityId,
@@ -190,8 +265,12 @@ public sealed class ResidentOnboardingService(
             Name = name,
             Phone = phone,
             Email = email,
-            ResidentType = "owner",
+            ResidentType = residentType,
             VerificationStatus = ResidentVerificationStatuses.Pending,
+            DateOfBirth = request.DateOfBirth,
+            Gender = string.IsNullOrWhiteSpace(request.Gender) ? null : request.Gender.Trim(),
+            MoveInDate = request.MoveInDate,
+            GovtIdType = string.IsNullOrWhiteSpace(request.GovtIdType) ? null : request.GovtIdType.Trim(),
         };
         db.Residents.Add(resident);
 
@@ -213,11 +292,15 @@ public sealed class ResidentOnboardingService(
             db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = roleId, CommunityId = request.CommunityId });
         }
 
-        var photoFileId = await StorePhotoAsync(request.PhotoBase64, request.CommunityId, resident.Id, cancellationToken);
-        if (photoFileId is { } pid)
-        {
-            resident.PhotoFileId = pid.ToString();
-        }
+        var selfie = request.SelfieBase64 ?? request.PhotoBase64;
+        var selfieId = await StorePhotoAsync(selfie, request.CommunityId, resident.Id, cancellationToken);
+        if (selfieId is { } sid) resident.PhotoFileId = sid.ToString();
+
+        var frontId = await StorePhotoAsync(request.GovtIdFrontBase64, request.CommunityId, resident.Id, cancellationToken);
+        if (frontId is { } fid) resident.GovtIdFrontFileId = fid.ToString();
+
+        var backId = await StorePhotoAsync(request.GovtIdBackBase64, request.CommunityId, resident.Id, cancellationToken);
+        if (backId is { } bid) resident.GovtIdBackFileId = bid.ToString();
 
         await db.SaveChangesAsync(cancellationToken);
 

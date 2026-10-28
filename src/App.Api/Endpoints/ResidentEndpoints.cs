@@ -9,30 +9,7 @@ using App.Domain.Identity;
 
 namespace App.Api.Endpoints;
 
-/// <summary>
-/// HTTP surface over the Task 12 resident services — <see cref="IResidentService"/> (Req 15.1–15.5,
-/// verification 17.x, move 18.x) and <see cref="ICommunicationPreferenceService"/> (Req 20.1, 20.2).
-/// Every endpoint uses the <see cref="ApiResult{T}"/> envelope (Req 9.1), carries a
-/// <see cref="RequirePermissionAttribute"/> on the correct (Action, ResourceType) (Req 4.1),
-/// validates write bodies (Req 9.2), applies the "write" rate-limit policy to mutations (Req 65.5),
-/// and the list is paginated/filter(by verificationStatus + residentType)/sort/search through the
-/// shared query infra (Req 15.4, 9.3). Lists are scoped to the caller's authorized communities by
-/// the EF global tenant query filter — not a bespoke predicate here.
-///
-/// <para><b>Verify / reject / resubmit need <c>Approve</c></b> on <c>Resident</c> (Req 17.5); the
-/// service re-checks the same permission as defense-in-depth. CONFLICT (invalid transition /
-/// concurrency), VALIDATION_ERROR (bad type / blank reason), NOT_FOUND and FORBIDDEN are surfaced
-/// by the services through the central exception envelope — the endpoints only shape the request.</para>
-///
-/// <para><b>Resident-own communication preferences (Req 66.3).</b> Preferences are gated on
-/// <c>(View|Edit, Resident)</c> rather than a new resource type: reusing the existing seeded
-/// <c>Resident</c> catalog entry avoids a schema/seed change, and the resident self-scope global
-/// query filter already restricts a resident principal to their own resident row — so a resident
-/// holding Edit-on-Resident can only read/write their OWN preferences (a foreign resident id is
-/// invisible under their scope and the service returns NOT_FOUND), while an operator with wider
-/// Resident scope can manage others. The permission gate + tenant/self-scope together realize
-/// Req 66.3 without bespoke endpoint logic.</para>
-/// </summary>
+
 public static class ResidentEndpoints
 {
     public static IEndpointRouteBuilder MapResidentEndpoints(this IEndpointRouteBuilder app)
@@ -95,11 +72,7 @@ public static class ResidentEndpoints
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Resident"));
 
-        // GET /api/v1/residents/me — the SIGNED-IN principal's own resident row + own unit memberships
-        // (Resident.UserId == token user). One self-targeted call for the app's "who am I" (header
-        // name, self-service unit pickers) — no list-and-filter. No linked resident (e.g. superadmin)
-        // → { resident: null, units: [] }, not NOT_FOUND. Registered BEFORE /{id:guid} so the literal
-        // "me" segment is matched here, never treated as an id.
+        
         group.MapGet("/me", async (
                 IResidentService residents,
                 CancellationToken ct) =>
@@ -107,6 +80,20 @@ public static class ResidentEndpoints
                 var dto = await residents.GetMeAsync(ct);
                 return Results.Ok(ApiResult<ResidentMeDto>.Ok(dto, string.Empty));
             })
+            .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Resident"));
+
+        
+        group.MapPost("/me/submit-kyc", async (
+                SubmitKycBody body,
+                IResidentService residents,
+                CancellationToken ct) =>
+            {
+                var dto = await residents.SubmitMyKycAsync(new SubmitKycRequest(
+                    body.ResidentType, body.DateOfBirth, body.Gender, body.MoveInDate,
+                    body.GovtIdType, body.SelfieBase64, body.GovtIdFrontBase64, body.GovtIdBackBase64), ct);
+                return Results.Ok(ApiResult<ResidentDto>.Ok(dto, string.Empty));
+            })
+            .RequireRateLimiting(RateLimitingExtensions.WritePolicy)
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Resident"));
 
         // GET /api/v1/residents/{id} — fetch one, tenant-scoped. Unknown/foreign id → NOT_FOUND.
@@ -354,6 +341,28 @@ public static class ResidentEndpoints
         // Optional File_Service photo reference; null when none captured.
         [MaxLength(200)]
         public string? PhotoFileId { get; init; }
+    }
+
+    public sealed class SubmitKycBody
+    {
+        [MaxLength(100)]
+        public string? ResidentType { get; init; }
+
+        public DateOnly? DateOfBirth { get; init; }
+
+        [MaxLength(16)]
+        public string? Gender { get; init; }
+
+        public DateOnly? MoveInDate { get; init; }
+
+        [MaxLength(32)]
+        public string? GovtIdType { get; init; }
+
+        public string? SelfieBase64 { get; init; }
+
+        public string? GovtIdFrontBase64 { get; init; }
+
+        public string? GovtIdBackBase64 { get; init; }
     }
 
     public sealed class UpdateResidentBody
