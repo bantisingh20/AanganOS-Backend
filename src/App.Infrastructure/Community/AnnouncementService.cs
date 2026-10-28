@@ -42,6 +42,7 @@ public sealed class AnnouncementService(
             .Sortable("title", a => a.Title)
             .Sortable("category", a => a.Category)
             .Filterable("category", a => a.Category)
+            .Filterable("publishedAtUtc", a => a.PublishedAtUtc)
             .Searchable(a => a.Title)
             .Searchable(a => a.Body);
 

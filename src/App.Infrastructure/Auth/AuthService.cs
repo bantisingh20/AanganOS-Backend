@@ -104,7 +104,64 @@ public sealed class AuthService(
         await db.SaveChangesAsync(cancellationToken);
 
         var refreshToken = $"{session.Id:N}.{refreshSecret}";
-        return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames, refreshToken);
+        var userDto = await BuildLoginUserAsync(userId, communityIds, roleNames, permissions, cancellationToken);
+        return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames, refreshToken, userDto);
+    }
+
+    private async Task<LoginUserDto> BuildLoginUserAsync(
+        Guid userId,
+        IReadOnlyCollection<Guid> communityIds,
+        IReadOnlyCollection<string> roleNames,
+        IReadOnlyCollection<string> permissions,
+        CancellationToken cancellationToken)
+    {
+        var user = await db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new { u.Name, u.Email, u.Phone })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var resident = await db.Residents.IgnoreQueryFilters().AsNoTracking()
+            .Where(r => r.UserId == userId && !r.IsDeleted)
+            .Select(r => new { r.Id, r.Name })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var name = !string.IsNullOrWhiteSpace(resident?.Name) ? resident!.Name.Trim()
+            : !string.IsNullOrWhiteSpace(user?.Name) ? user!.Name!.Trim()
+            : null;
+
+        Guid? communityId = communityIds.Count > 0 ? communityIds.First() : null;
+        string? communityName = null;
+        Guid? organizationId = null;
+        string? organizationName = null;
+        if (communityId is { } cid)
+        {
+            var community = await db.Communities.IgnoreQueryFilters().AsNoTracking()
+                .Where(c => c.Id == cid)
+                .Select(c => new { c.Name, c.OrganizationId })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (community is not null)
+            {
+                communityName = community.Name;
+                organizationId = community.OrganizationId;
+                organizationName = await db.Organizations.IgnoreQueryFilters().AsNoTracking()
+                    .Where(o => o.Id == community.OrganizationId)
+                    .Select(o => o.Name)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+        }
+
+        return new LoginUserDto(
+            userId,
+            name,
+            string.IsNullOrWhiteSpace(user?.Email) ? null : user!.Email,
+            string.IsNullOrWhiteSpace(user?.Phone) ? null : user!.Phone,
+            resident?.Id,
+            communityId,
+            communityName,
+            organizationId,
+            organizationName,
+            roleNames,
+            permissions);
     }
 
     public async Task<LoginResult> RefreshAsync(RefreshRequest request, CancellationToken cancellationToken = default)
@@ -160,7 +217,8 @@ public sealed class AuthService(
         await db.SaveChangesAsync(cancellationToken);
 
         var refreshToken = $"{session.Id:N}.{newSecret}";
-        return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames, refreshToken);
+        var userDto = await BuildLoginUserAsync(user.Id, communityIds, roleNames, permissions, cancellationToken);
+        return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames, refreshToken, userDto);
     }
 
     /// <summary>Split a "&lt;sessionId&gt;.&lt;secret&gt;" refresh token into its parts; nulls on malformed input.</summary>

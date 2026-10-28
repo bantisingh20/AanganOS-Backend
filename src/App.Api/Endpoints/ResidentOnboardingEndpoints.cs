@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using App.Api.Security;
 using App.Api.Validation;
+using App.Application.Gate;
 using App.Application.Onboarding;
 using App.Contracts.Envelope;
 using App.Domain.Identity;
@@ -74,10 +75,14 @@ public static class ResidentOnboardingEndpoints
         // GET /public/onboarding-config — whether resident self-registration is enabled.
         anon.MapGet("/public/onboarding-config", async (
                 IResidentOnboardingService svc,
+                IGateService gate,
                 CancellationToken ct) =>
             {
                 var enabled = await svc.IsSelfRegistrationEnabledAsync(ct);
-                return Results.Ok(ApiResult<OnboardingConfigResponse>.Ok(new OnboardingConfigResponse(enabled), string.Empty));
+                var validity = await gate.ResolveDefaultValidityAsync(null, ct);
+                var expiringSoonDays = await gate.GetRecurringExpiringSoonDaysAsync(null, ct);
+                return Results.Ok(ApiResult<OnboardingConfigResponse>.Ok(
+                    new OnboardingConfigResponse(enabled, validity.Amount, validity.UnitCode, validity.Describe(), expiringSoonDays), string.Empty));
             });
 
         // POST /public/register/request-otp — issue a 6-digit OTP to a phone for registration.
@@ -197,7 +202,12 @@ public static class ResidentOnboardingEndpoints
         public string? Reason { get; init; }
     }
 
-    public sealed record OnboardingConfigResponse(bool SelfRegistrationEnabled);
+    public sealed record OnboardingConfigResponse(
+        bool SelfRegistrationEnabled,
+        int VisitPassValidityAmount,
+        string VisitPassValidityUnit,
+        string VisitPassValidityText,
+        int RecurringExpiringSoonDays);
 
     public sealed class SelfRegisterBody
     {

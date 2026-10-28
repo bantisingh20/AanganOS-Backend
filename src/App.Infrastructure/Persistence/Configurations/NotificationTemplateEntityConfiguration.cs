@@ -120,6 +120,14 @@ public sealed class NotificationTemplateEntityConfiguration : IEntityTypeConfigu
             NotificationCategories.Visitor,
             NotificationCategoryKind.Optional);
 
+        // Walk-in EXPIRED → tells the GUARD who registered it that it lapsed without approval.
+        yield return Platform(
+            NotificationTemplateKeys.VisitorExpired,
+            "Walk-in expired",
+            "The request for {visitorName} to unit {unitNumber} expired without approval. Re-register if the visitor is still waiting.",
+            NotificationCategories.Visitor,
+            NotificationCategoryKind.Optional);
+
         // Incident escalated to responders (Req 27.2, Task 16.3). MANDATORY "responder" category —
         // security staff must always receive an escalation regardless of opt-out (Req 20.4).
         yield return Platform(

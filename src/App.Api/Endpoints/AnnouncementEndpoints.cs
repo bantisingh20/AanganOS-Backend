@@ -21,6 +21,7 @@ public static class AnnouncementEndpoints
                 string? search,
                 string? sort,
                 string? category,
+                DateTime? fromDate,
                 bool? includeInactive,
                 int? page,
                 int? pageSize,
@@ -31,6 +32,10 @@ public static class AnnouncementEndpoints
                 if (!string.IsNullOrWhiteSpace(category))
                 {
                     filters.Add(new FilterTerm("category", FilterOperator.Equals, category));
+                }
+                if (fromDate is not null)
+                {
+                    filters.Add(new FilterTerm("publishedAtUtc", FilterOperator.GreaterThanOrEqual, fromDate.Value.ToUniversalTime().ToString("o")));
                 }
 
                 var parameters = new ListQueryParameters

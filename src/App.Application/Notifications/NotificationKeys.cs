@@ -1,12 +1,6 @@
 namespace App.Application.Notifications;
 
-/// <summary>
-/// Well-known template keys the platform seeds out of the box (Req 11.2). Like
-/// <c>MasterDataKeys</c>, the set is open: later phases add templates simply by seeding rows under
-/// new keys (the full Req 64 matrix), so these constants are a convenience for the Phase 1 resident
-/// verification/approval notices, not a closed universe. The constant is only the <i>key</i>; the
-/// title/body/category/channels are editable data on the seeded <c>NotificationTemplate</c> row.
-/// </summary>
+
 public static class NotificationTemplateKeys
 {
     /// <summary>
@@ -51,6 +45,12 @@ public static class NotificationTemplateKeys
     /// <c>visitor</c> (optional); fills {visitorName}, {unitNumber}, {reason}.
     /// </summary>
     public const string VisitorRejected = "visitor.rejected";
+
+    /// <summary>
+    /// A pending walk-in auto-expired (not approved within the configured window) → notify the GUARD
+    /// who registered it. Category <c>visitor</c> (optional); fills {visitorName}, {unitNumber}.
+    /// </summary>
+    public const string VisitorExpired = "visitor.expired";
 
     /// <summary>
     /// A high-severity incident met the configured escalation threshold → notify the responders

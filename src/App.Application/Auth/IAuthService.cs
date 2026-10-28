@@ -104,7 +104,23 @@ public sealed record LoginResult(
     string AccessToken,
     DateTime ExpiresAtUtc,
     IReadOnlyCollection<string> Roles,
-    string RefreshToken);
+    string RefreshToken,
+    LoginUserDto User);
+
+/// <summary>The signed-in principal's profile summary returned at login/refresh so the client can
+/// show the real name and gate features without extra round-trips.</summary>
+public sealed record LoginUserDto(
+    Guid UserId,
+    string? Name,
+    string? Email,
+    string? Phone,
+    Guid? ResidentId,
+    Guid? CommunityId,
+    string? CommunityName,
+    Guid? OrganizationId,
+    string? OrganizationName,
+    IReadOnlyCollection<string> Roles,
+    IReadOnlyCollection<string> Permissions);
 
 /// <summary>A silent re-auth request: the opaque refresh token (<c>&lt;sessionId&gt;.&lt;secret&gt;</c>) the client holds.</summary>
 public sealed record RefreshRequest(string RefreshToken);

@@ -56,6 +56,9 @@ public class RecurringVisitor : TenantOwnedEntity, IUnitScoped
     /// <summary>Optional visitor phone (Req 25.2).</summary>
     public string? Phone { get; set; }
 
+    /// <summary>Optional File_Service reference to a captured visitor photo.</summary>
+    public Guid? PhotoFileId { get; set; }
+
     /// <summary>
     /// Configurable visitor-category code resolved against the <c>Visitor_Category</c> master-data
     /// list (guest / cab / delivery / service_provider / contractor, Req 25.1). Stored as the stable

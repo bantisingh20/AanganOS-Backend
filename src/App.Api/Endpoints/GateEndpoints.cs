@@ -322,7 +322,8 @@ public static class GateEndpoints
                     body.StartDate,
                     body.EndDate,
                     body.DailyStartMinutes,
-                    body.DailyEndMinutes), ct);
+                    body.DailyEndMinutes,
+                    body.PhotoFileId), ct);
                 return Results.Ok(ApiResult<RecurringVisitorDto>.Ok(dto, string.Empty));
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>()
@@ -341,6 +342,20 @@ public static class GateEndpoints
             .RequireRateLimiting(RateLimitingExtensions.WritePolicy)
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.Create, "RecurringVisitor"));
 
+        // POST /{id}/extend — extend the validity (new end date) and reactivate (Req 25.2). Create grant.
+        group.MapPost("/{id:guid}/extend", async (
+                Guid id,
+                ExtendRecurringVisitorBody body,
+                IGateService gate,
+                CancellationToken ct) =>
+            {
+                var dto = await gate.ExtendRecurringVisitorAsync(id, body.EndDate, ct);
+                return Results.Ok(ApiResult<RecurringVisitorDto>.Ok(dto, string.Empty));
+            })
+            .AddEndpointFilter<DataAnnotationsValidationFilter>()
+            .RequireRateLimiting(RateLimitingExtensions.WritePolicy)
+            .WithMetadata(new RequirePermissionAttribute(PermissionAction.Create, "RecurringVisitor"));
+
         // GET — paginated/filter(by status/category)/sort list (Req 25.2).
         group.MapGet("/", async (
                 string? search,
@@ -348,6 +363,7 @@ public static class GateEndpoints
                 string? status,
                 string? category,
                 Guid? hostUnitId,
+                bool? active,
                 int? page,
                 int? pageSize,
                 IGateService gate,
@@ -358,7 +374,7 @@ public static class GateEndpoints
                 AddEquals(filters, "category", category);
                 AddEquals(filters, "hostUnitId", hostUnitId);
 
-                var data = await gate.ListRecurringVisitorsAsync(BuildParameters(page, pageSize, search, sort, filters), ct);
+                var data = await gate.ListRecurringVisitorsAsync(BuildParameters(page, pageSize, search, sort, filters), active, ct);
                 return Results.Ok(ApiResult<PagedData<RecurringVisitorDto>>.Ok(data, string.Empty));
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "RecurringVisitor"));
@@ -594,5 +610,13 @@ public static class GateEndpoints
         public int? DailyStartMinutes { get; init; }
 
         public int? DailyEndMinutes { get; init; }
+
+        public Guid? PhotoFileId { get; init; }
+    }
+
+    public sealed class ExtendRecurringVisitorBody
+    {
+        [Required(ErrorMessage = "endDate is required")]
+        public DateTime EndDate { get; init; }
     }
 }

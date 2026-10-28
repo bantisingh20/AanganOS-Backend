@@ -43,7 +43,8 @@ public sealed record VisitorDto(
     Guid? ApprovedByResidentId,
     DateTime? ApprovalDecisionAtUtc,
     bool IsAdmittable,
-    string? QrToken = null);
+    string? QrToken = null,
+    string? HostUnitNumber = null);
 
 public sealed record VerifyVisitPassResult(
     bool Accepted,
@@ -147,7 +148,8 @@ public sealed record RecurringVisitorDto(
     DateTime EndDate,
     int? DailyStartMinutes,
     int? DailyEndMinutes,
-    string Status);
+    string Status,
+    Guid? PhotoFileId = null);
 
 public sealed record CreateRecurringVisitorRequest(
     Guid HostUnitId,
@@ -159,7 +161,8 @@ public sealed record CreateRecurringVisitorRequest(
     DateTime StartDate,
     DateTime EndDate,
     int? DailyStartMinutes,
-    int? DailyEndMinutes);
+    int? DailyEndMinutes,
+    Guid? PhotoFileId = null);
 
 public sealed record EntryExitEventDto(
     Guid Id,
@@ -190,3 +193,25 @@ public sealed record RecordExitRequest(
     Guid? RecurringVisitorId,
     Guid? GateId,
     string? GateLabel);
+
+public enum VisitPassValidityUnit
+{
+    Days,
+    Hours,
+}
+
+public readonly record struct VisitPassValidity(int Amount, VisitPassValidityUnit Unit)
+{
+    public DateTime Apply(DateTime from) =>
+        Unit == VisitPassValidityUnit.Hours ? from.AddHours(Amount) : from.AddDays(Amount);
+
+    public string UnitCode => Unit == VisitPassValidityUnit.Hours ? "hours" : "days";
+
+    public string Describe()
+    {
+        var noun = Unit == VisitPassValidityUnit.Hours
+            ? (Amount == 1 ? "hour" : "hours")
+            : (Amount == 1 ? "day" : "days");
+        return $"{Amount} {noun}";
+    }
+}

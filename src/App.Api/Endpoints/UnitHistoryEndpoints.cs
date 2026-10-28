@@ -7,19 +7,7 @@ using App.Domain.Identity;
 
 namespace App.Api.Endpoints;
 
-/// <summary>
-/// HTTP surface over <see cref="IUnitHistoryService"/> (Task 12.2) — a unit's ownership and tenancy
-/// history (Req 16.1–16.4). Nested under <c>/api/v1/units/{id}</c>. Every endpoint uses the
-/// <see cref="ApiResult{T}"/> envelope (Req 9.1), carries a <see cref="RequirePermissionAttribute"/>
-/// on the <c>OwnershipHistory</c> / <c>TenancyHistory</c> resource type for its action (Req 4.1),
-/// validates write bodies (Req 9.2), and applies the "write" rate-limit policy to mutations
-/// (Req 65.5). Reads are tenant-scoped by the global query filter; CONFLICT (open-owner race /
-/// concurrency), VALIDATION_ERROR (cross-community), NOT_FOUND are surfaced by the service.
-///
-/// <para>As append-only registers the resource types carry no Delete — a prior entry is retained,
-/// never removed (Req 16.3). Assign-ownership and begin-tenancy use the <c>Create</c> verb;
-/// end-tenancy (closing an open row) uses <c>Edit</c>.</para>
-/// </summary>
+
 public static class UnitHistoryEndpoints
 {
     public static IEndpointRouteBuilder MapUnitHistoryEndpoints(this IEndpointRouteBuilder app)
@@ -36,7 +24,7 @@ public static class UnitHistoryEndpoints
                 var members = await residents.GetUnitHouseholdAsync(unitId, ct);
                 return Results.Ok(ApiResult<IReadOnlyList<UnitHouseholdMemberDto>>.Ok(members, string.Empty));
             })
-            .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "HouseholdMember"));
+            .RequireAuthorization();
 
         // GET /api/v1/units/{id}/history — combined chronological ownership + tenancy (Req 16.4).
         group.MapGet("/history", async (

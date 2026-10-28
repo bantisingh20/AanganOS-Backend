@@ -26,6 +26,11 @@ if (builder.Configuration.GetValue<bool>("MessageOutboxWorker:RunInApi"))
     builder.Services.AddHostedService<App.Infrastructure.Messaging.MessageOutboxDrainService>();
 }
 
+if (builder.Configuration.GetValue<bool?>("WalkInExpiryWorker:RunInApi") ?? true)
+{
+    builder.Services.AddHostedService<App.Api.Gate.ApiWalkInExpiryService>();
+}
+
 builder.Services.AddRequestPipelineSecurity(builder.Configuration);
 
 builder.AddObservability();

@@ -12,7 +12,13 @@ public sealed record ResidentDto(
     string VerificationStatus,
     string? RejectionReason,
     bool IsArchived,
-    string? PhotoFileId = null);
+    string? PhotoFileId = null,
+    DateOnly? DateOfBirth = null,
+    string? Gender = null,
+    DateOnly? MoveInDate = null,
+    string? GovtIdType = null,
+    string? GovtIdFrontFileId = null,
+    string? GovtIdBackFileId = null);
 
 
 public sealed record HouseholdMemberDto(

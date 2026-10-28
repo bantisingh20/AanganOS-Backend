@@ -77,6 +77,9 @@ public static class VisitorStatuses
     /// <summary>A resident rejected the walk-in (Req 24.4): not admittable; no entry event permitted.</summary>
     public const string Rejected = "rejected";
 
+    /// <summary>Auto-expired: pending past the configured window without approval; not admittable.</summary>
+    public const string Expired = "expired";
+
     /// <summary>The visitor has entered (set by the Task 16.2 entry workflow).</summary>
     public const string Entered = "entered";
 

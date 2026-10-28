@@ -39,5 +39,11 @@ builder.Services.AddOptions<AmcExpiryReminderWorkerOptions>()
     .ValidateOnStart();
 builder.Services.AddHostedService<AmcExpiryReminderWorkerService>();
 
+builder.Services.AddOptions<WalkInExpiryWorkerOptions>()
+    .Bind(builder.Configuration.GetSection(WalkInExpiryWorkerOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddHostedService<WalkInExpiryWorkerService>();
+
 var host = builder.Build();
 host.Run();

@@ -1,6 +1,7 @@
 using App.Application.Abstractions;
 using App.Application.Auth;
 using App.Application.Community;
+using App.Application.Config;
 using App.Application.Identity;
 using App.Domain.Identity;
 using App.Infrastructure;
@@ -53,6 +54,8 @@ public static class DevDataSeeder
         //    string and every table, applying the HasData rows (permission catalog, master-data
         //    lists, notification templates). No-op when the schema already exists.
         await db.Database.EnsureCreatedAsync(ct);
+
+        await SeedGateConfigDefaultsAsync(sp.GetRequiredService<IConfigService>(), ct);
 
         var hasher = sp.GetRequiredService<IPasswordHasher>();
 
@@ -303,6 +306,8 @@ public static class DevDataSeeder
             (PermissionAction.View, "SosAlert"),
             (PermissionAction.Create, "SosAlert"),
             (PermissionAction.Edit, "SosAlert"),
+            // Announcements (read the notice board)
+            (PermissionAction.View, "Announcement"),
             // Parcels at the gate (register + hand over)
             (PermissionAction.View, "Parcel"),
             (PermissionAction.Create, "Parcel"),
@@ -312,6 +317,7 @@ public static class DevDataSeeder
             // Context reads
             (PermissionAction.View, "Unit"),
             (PermissionAction.View, "Resident"),
+            (PermissionAction.View, "HouseholdMember"),
             (PermissionAction.View, "Community"),
         };
 
@@ -515,6 +521,28 @@ public static class DevDataSeeder
         else
         {
             await roles.DefineAsync(request, ct);
+        }
+    }
+
+    private static async Task SeedGateConfigDefaultsAsync(IConfigService config, CancellationToken ct)
+    {
+        var defaults = new (string Key, string Value)[]
+        {
+            ("gate.walkIn.approvalRequired", "true"),
+            ("gate.walkIn.pendingExpiryMinutes", "15"),
+            ("gate.visitPass.defaultValidity", "2"),
+            ("gate.visitPass.defaultValidityUnit", "days"),
+            ("gate.visitPass.defaultValidityHours", "24"),
+            ("gate.visitPass.defaultMaxUses", "1"),
+            ("gate.recurringVisitor.expiringSoonDays", "10"),
+        };
+
+        foreach (var (key, value) in defaults)
+        {
+            if (await config.GetAsync(key, null, ct) is null)
+            {
+                await config.SetAsync(key, value, null, ct);
+            }
         }
     }
 }

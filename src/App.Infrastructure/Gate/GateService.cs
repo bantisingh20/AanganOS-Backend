@@ -87,10 +87,17 @@ public sealed class GateService(
             .Searchable(r => r.Name);
     private const string WalkInApprovalRequiredKey = "gate.walkIn.approvalRequired";
     private const bool DefaultWalkInApprovalRequired = true;
+    private const string WalkInPendingExpiryMinutesKey = "gate.walkIn.pendingExpiryMinutes";
+    private const int DefaultWalkInPendingExpiryMinutes = 15;
+    private const int MaxPendingExpirySweepBatch = 500;
     private const string DefaultValidityHoursKey = "gate.visitPass.defaultValidityHours";
     private const int DefaultValidityHours = 24;
+    private const string DefaultValidityKey = "gate.visitPass.defaultValidity";
+    private const string DefaultValidityUnitKey = "gate.visitPass.defaultValidityUnit";
     private const string DefaultMaxUsesKey = "gate.visitPass.defaultMaxUses";
     private const int DefaultMaxUses = 1;
+    private const string RecurringExpiringSoonDaysKey = "gate.recurringVisitor.expiringSoonDays";
+    private const int DefaultRecurringExpiringSoonDays = 10;
 
     // How many QR-token generations to try before giving up on a (vanishingly unlikely) collision.
     private const int QrTokenAttempts = 5;
@@ -110,8 +117,8 @@ public sealed class GateService(
 
         var now = clock.UtcNow;
         var validFrom = request.ValidFromUtc ?? now;
-        var validityHours = await config.GetIntAsync(DefaultValidityHoursKey, DefaultValidityHours, communityId, cancellationToken);
-        var validUntil = request.ValidUntilUtc ?? validFrom.AddHours(validityHours);
+        var validity = await ResolveDefaultValidityAsync(communityId, cancellationToken);
+        var validUntil = request.ValidUntilUtc ?? validity.Apply(validFrom);
         if (validUntil <= validFrom)
         {
             throw new ValidationException("validUntilUtc", "The pass valid-until time must be after the valid-from time.");
@@ -451,6 +458,7 @@ public sealed class GateService(
             HostResidentId = request.HostResidentId,
             Name = name,
             Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
+            PhotoFileId = request.PhotoFileId,
             Category = request.Category.Trim(),
             DaysOfWeek = request.DaysOfWeek,
             StartDate = request.StartDate.Date,
@@ -503,6 +511,47 @@ public sealed class GateService(
             cancellationToken);
 
         // RowVersion makes the revoke record exactly once under concurrency (loser → CONFLICT).
+        await db.SaveChangesAsync(cancellationToken);
+
+        return ToDto(recurring);
+    }
+
+    public async Task<int> GetRecurringExpiringSoonDaysAsync(Guid? communityId, CancellationToken cancellationToken = default)
+    {
+        var days = await config.GetIntAsync(RecurringExpiringSoonDaysKey, DefaultRecurringExpiringSoonDays, communityId, cancellationToken);
+        return days >= 0 ? days : DefaultRecurringExpiringSoonDays;
+    }
+
+    public async Task<RecurringVisitorDto> ExtendRecurringVisitorAsync(Guid recurringVisitorId, DateTime newEndDateUtc, CancellationToken cancellationToken = default)
+    {
+        if (!await authorizationGuard.HasPermissionAsync(PermissionAction.Create, "RecurringVisitor", cancellationToken))
+        {
+            throw new ForbiddenException("You do not have permission to extend a recurring visitor.");
+        }
+
+        var recurring = await db.RecurringVisitors.FirstOrDefaultAsync(r => r.Id == recurringVisitorId, cancellationToken)
+            ?? throw new NotFoundException("Recurring visitor not found.");
+
+        authorizationGuard.EnsureCommunityAuthorized(recurring.CommunityId);
+
+        var newEnd = newEndDateUtc.Date;
+        if (newEnd < recurring.StartDate.Date)
+        {
+            throw new ValidationException("endDate", "The new end date must be on or after the start date.");
+        }
+
+        if (newEnd < clock.UtcNow.Date)
+        {
+            throw new ValidationException("endDate", "The new end date must be today or in the future.");
+        }
+
+        recurring.EndDate = newEnd;
+        recurring.Status = RecurringVisitorStatuses.Active;
+
+        await audit.AppendAsync(
+            new AuditEntry("Extend", "RecurringVisitor", recurring.Id.ToString(), recurring.CommunityId, Detail: null),
+            cancellationToken);
+
         await db.SaveChangesAsync(cancellationToken);
 
         return ToDto(recurring);
@@ -874,20 +923,38 @@ public sealed class GateService(
         return pass is null ? null : ToDto(pass);
     }
 
-    public Task<PagedData<VisitorDto>> ListVisitorsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<VisitorDto>> ListVisitorsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
         // The pending-approval queue (Req 24.2): tenant/self-scoped; a status=pending filter surfaces
         // the walk-ins a resident must approve/reject for their own unit.
-        return db.Visitors.AsNoTracking().ToPagedResultAsync(
+        var page = await db.Visitors.AsNoTracking().ToPagedResultAsync(
             parameters, VisitorQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+        var withUnits = await WithUnitNumbersAsync(page.Items, cancellationToken);
+        return new PagedData<VisitorDto> { Items = withUnits, Page = page.Page, PageSize = page.PageSize, TotalCount = page.TotalCount };
     }
 
     public async Task<VisitorDto?> GetVisitorAsync(Guid visitorId, CancellationToken cancellationToken = default)
     {
         var visitor = await db.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == visitorId, cancellationToken);
-        return visitor is null ? null : ToDto(visitor);
+        if (visitor is null) return null;
+        var filled = await WithUnitNumbersAsync(new[] { ToDto(visitor) }, cancellationToken);
+        return filled[0];
+    }
+
+    // Resolve the host unit number for a batch of visitor DTOs in one query (avoids N+1) and returns
+    // new DTOs carrying HostUnitNumber. Tenant-scoped by the global filter.
+    private async Task<IReadOnlyList<VisitorDto>> WithUnitNumbersAsync(IReadOnlyList<VisitorDto> items, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0) return items;
+        var unitIds = items.Select(i => i.HostUnitId).Distinct().ToList();
+        var numbers = await db.Units.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => unitIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.UnitNumber, cancellationToken);
+        return items
+            .Select(i => numbers.TryGetValue(i.HostUnitId, out var n) ? i with { HostUnitNumber = n } : i)
+            .ToList();
     }
 
     public Task<PagedData<EntryExitEventDto>> ListEntryExitEventsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
@@ -900,11 +967,20 @@ public sealed class GateService(
             parameters, EntryExitEventQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
     }
 
-    public Task<PagedData<RecurringVisitorDto>> ListRecurringVisitorsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public Task<PagedData<RecurringVisitorDto>> ListRecurringVisitorsAsync(ListQueryParameters parameters, bool? active = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        return db.RecurringVisitors.AsNoTracking().ToPagedResultAsync(
+        var query = db.RecurringVisitors.AsNoTracking();
+        if (active is { } wantActive)
+        {
+            var today = clock.UtcNow.Date;
+            query = wantActive
+                ? query.Where(r => r.Status == RecurringVisitorStatuses.Active && r.EndDate >= today)
+                : query.Where(r => r.Status != RecurringVisitorStatuses.Active || r.EndDate < today);
+        }
+
+        return query.ToPagedResultAsync(
             parameters, RecurringVisitorQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
     }
 
@@ -1012,6 +1088,95 @@ public sealed class GateService(
         await notifications.EnqueueAsync(
             new NotificationRequest(
                 approved ? NotificationTemplateKeys.VisitorApproved : NotificationTemplateKeys.VisitorRejected,
+                guardUserId,
+                visitor.CommunityId,
+                Placeholders: placeholders),
+            cancellationToken);
+    }
+
+    public async Task<int> ExpirePendingWalkInsAsync(int maxVisitors, CancellationToken cancellationToken = default)
+    {
+        var take = Math.Clamp(maxVisitors, 1, MaxPendingExpirySweepBatch);
+        var now = clock.UtcNow;
+
+        var candidates = await db.Visitors
+            .Where(v => v.Status == VisitorStatuses.Pending)
+            .OrderBy(v => v.CreatedAtUtc)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        if (candidates.Count == 0)
+        {
+            return 0;
+        }
+
+        var expiryMinutesByCommunity = new Dictionary<Guid, int>();
+        foreach (var communityId in candidates.Select(v => v.CommunityId).Distinct())
+        {
+            expiryMinutesByCommunity[communityId] = await config.GetIntAsync(
+                WalkInPendingExpiryMinutesKey, DefaultWalkInPendingExpiryMinutes, communityId, cancellationToken);
+        }
+
+        var expired = 0;
+        foreach (var visitor in candidates)
+        {
+            var expiryMinutes = expiryMinutesByCommunity[visitor.CommunityId];
+            if (expiryMinutes <= 0)
+            {
+                continue;
+            }
+
+            var minutesPending = (now - visitor.CreatedAtUtc).TotalMinutes;
+            if (minutesPending < expiryMinutes)
+            {
+                continue;
+            }
+
+            visitor.Status = VisitorStatuses.Expired;
+            visitor.ApprovalDecisionAtUtc = now;
+
+            await audit.AppendAsync(
+                new AuditEntry("Expire", "Visitor", visitor.Id.ToString(), visitor.CommunityId,
+                    Detail: $"pendingMinutes={minutesPending:F1}; expiryMinutes={expiryMinutes}"),
+                cancellationToken);
+
+            await NotifyRegisteringGuardOfExpiryAsync(visitor, cancellationToken);
+
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                expired++;
+            }
+            catch (ConflictException)
+            {
+                db.Entry(visitor).State = EntityState.Detached;
+            }
+        }
+
+        return expired;
+    }
+
+    private async Task NotifyRegisteringGuardOfExpiryAsync(Visitor visitor, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(visitor.CreatedBy, out var guardUserId))
+        {
+            return;
+        }
+
+        var unitNumber = await db.Units.AsNoTracking()
+            .Where(u => u.Id == visitor.HostUnitId)
+            .Select(u => u.UnitNumber)
+            .FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
+
+        var placeholders = new Dictionary<string, string>
+        {
+            ["visitorName"] = visitor.Name,
+            ["unitNumber"] = unitNumber,
+        };
+
+        await notifications.EnqueueAsync(
+            new NotificationRequest(
+                NotificationTemplateKeys.VisitorExpired,
                 guardUserId,
                 visitor.CommunityId,
                 Placeholders: placeholders),
@@ -1165,6 +1330,22 @@ public sealed class GateService(
         }
     }
 
+    public async Task<VisitPassValidity> ResolveDefaultValidityAsync(Guid? communityId, CancellationToken cancellationToken = default)
+    {
+        var amount = await config.GetIntAsync(DefaultValidityKey, 0, communityId, cancellationToken);
+        if (amount >= 1)
+        {
+            var unitRaw = await config.GetStringAsync(DefaultValidityUnitKey, "days", communityId, cancellationToken);
+            var unit = string.Equals(unitRaw.Trim(), "hours", StringComparison.OrdinalIgnoreCase)
+                ? VisitPassValidityUnit.Hours
+                : VisitPassValidityUnit.Days;
+            return new VisitPassValidity(amount, unit);
+        }
+
+        var legacyHours = await config.GetIntAsync(DefaultValidityHoursKey, DefaultValidityHours, communityId, cancellationToken);
+        return new VisitPassValidity(Math.Max(1, legacyHours), VisitPassValidityUnit.Hours);
+    }
+
     private VerifyVisitPassResult Reject(string reason) =>
         new(Accepted: false, RejectionReason: reason, Pass: null);
 
@@ -1239,7 +1420,7 @@ public sealed class GateService(
 
     private static RecurringVisitorDto ToDto(RecurringVisitor r) =>
         new(r.Id, r.CommunityId, r.HostUnitId, r.HostResidentId, r.Name, r.Phone, r.Category,
-            r.DaysOfWeek, r.StartDate, r.EndDate, r.DailyStartMinutes, r.DailyEndMinutes, r.Status);
+            r.DaysOfWeek, r.StartDate, r.EndDate, r.DailyStartMinutes, r.DailyEndMinutes, r.Status, r.PhotoFileId);
 
     private static EntryExitEventDto ToDto(EntryExitEvent e) =>
         new(e.Id, e.CommunityId, e.GateId, e.GateLabel, e.DestinationUnitId, e.VisitorId,

@@ -24,7 +24,7 @@ public static class AuthEndpoints
             {
                 var result = await auth.LoginAsync(
                     new LoginRequest(body.Identifier, body.Password, body.OneSignalPlayerId, body.Platform), ct);
-                var response = new LoginResponse(result.AccessToken, result.ExpiresAtUtc, result.Roles, result.RefreshToken);
+                var response = new LoginResponse(result.AccessToken, result.ExpiresAtUtc, result.Roles, result.RefreshToken, result.User);
                 return Results.Ok(ApiResult<LoginResponse>.Ok(response, string.Empty));
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
@@ -35,7 +35,7 @@ public static class AuthEndpoints
                 CancellationToken ct) =>
             {
                 var result = await auth.RefreshAsync(new RefreshRequest(body.RefreshToken), ct);
-                var response = new LoginResponse(result.AccessToken, result.ExpiresAtUtc, result.Roles, result.RefreshToken);
+                var response = new LoginResponse(result.AccessToken, result.ExpiresAtUtc, result.Roles, result.RefreshToken, result.User);
                 return Results.Ok(ApiResult<LoginResponse>.Ok(response, string.Empty));
             })
             .AddEndpointFilter<DataAnnotationsValidationFilter>();
@@ -159,7 +159,8 @@ public static class AuthEndpoints
         string AccessToken,
         DateTime ExpiresAtUtc,
         IReadOnlyCollection<string> Roles,
-        string RefreshToken);
+        string RefreshToken,
+        LoginUserDto User);
 
     public sealed class RefreshBody
     {

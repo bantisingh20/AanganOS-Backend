@@ -790,7 +790,8 @@ public sealed class ResidentService(
 
     private static ResidentDto ToDto(Resident r) =>
         new(r.Id, r.CommunityId, r.UserId, r.Name, r.Email, r.Phone, r.ResidentType,
-            r.VerificationStatus, r.RejectionReason, r.IsDeleted, r.PhotoFileId);
+            r.VerificationStatus, r.RejectionReason, r.IsDeleted, r.PhotoFileId,
+            r.DateOfBirth, r.Gender, r.MoveInDate, r.GovtIdType, r.GovtIdFrontFileId, r.GovtIdBackFileId);
 
     private static HouseholdMemberDto ToDto(HouseholdMember h) =>
         // UnitId is non-null in practice (set on associate); default to Guid.Empty defensively.

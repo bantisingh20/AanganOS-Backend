@@ -211,6 +211,7 @@ public sealed class MasterDataItemEntityConfiguration : IEntityTypeConfiguration
             ("pending", "Pending"),
             ("approved", "Approved"),
             ("rejected", "Rejected"),
+            ("expired", "Expired"),
             ("entered", "Entered"),
             ("exited", "Exited"),
         };
