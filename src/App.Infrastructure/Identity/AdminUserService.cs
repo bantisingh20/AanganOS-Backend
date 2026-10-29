@@ -162,20 +162,34 @@ public sealed class AdminUserService(
             user.PasswordHash = passwordHasher.Hash(request.Password);
         }
 
-        var existing = await db.UserRoles.Where(ur => ur.UserId == userId).ToListAsync(cancellationToken);
-        foreach (var ur in existing)
-        {
-            ur.IsDeleted = true;
-        }
-        await db.SaveChangesAsync(cancellationToken);
+        var desiredScopes = communityIds.Count == 0
+            ? new List<Guid?> { null }
+            : communityIds.Distinct().Select(cid => (Guid?)cid).ToList();
 
-        if (communityIds.Count == 0)
+        var existing = await db.UserRoles
+            .IgnoreQueryFilters()
+            .Where(ur => ur.UserId == userId)
+            .ToListAsync(cancellationToken);
+
+        foreach (var ur in existing.Where(ur => !ur.IsDeleted))
         {
-            db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id, CommunityId = null });
+            var stillWanted = ur.RoleId == role.Id && desiredScopes.Contains(ur.CommunityId);
+            if (!stillWanted)
+            {
+                ur.IsDeleted = true;
+            }
         }
-        else
+
+        foreach (var cid in desiredScopes)
         {
-            foreach (var cid in communityIds.Distinct())
+            var revived = existing.FirstOrDefault(ur => ur.IsDeleted && ur.RoleId == role.Id && ur.CommunityId == cid);
+            if (revived is not null)
+            {
+                revived.IsDeleted = false;
+                continue;
+            }
+            var alreadyLive = existing.Any(ur => !ur.IsDeleted && ur.RoleId == role.Id && ur.CommunityId == cid);
+            if (!alreadyLive)
             {
                 db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id, CommunityId = cid });
             }

@@ -907,14 +907,23 @@ public sealed class GateService(
     // Task 16.4 — paginated list/read surface (Req 23.5, 24.2, 25.4, 25.5)
     // =============================================================================================
 
-    public Task<PagedData<VisitPassDto>> ListVisitPassesAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<VisitPassDto>> ListVisitPassesAsync(ListQueryParameters parameters, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
         // Tenant + resident self-scope filtered by the global query filter (Req 23.5): a resident
         // principal only sees passes for their own unit. OTP is never on VisitPassDto (secrets).
-        return db.VisitPasses.AsNoTracking().ToPagedResultAsync(
+        var query = db.VisitPasses.AsNoTracking();
+        if (organizationId is { } orgId)
+        {
+            var communityIds = await CommunityIdsForOrgAsync(orgId, cancellationToken);
+            query = query.Where(p => communityIds.Contains(p.CommunityId));
+        }
+
+        var page = await query.ToPagedResultAsync(
             parameters, VisitPassQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+        var withOrg = await WithOrganizationNamesAsync(page.Items, p => p.CommunityId, (p, n) => p with { OrganizationName = n }, cancellationToken);
+        return new PagedData<VisitPassDto> { Items = withOrg, Page = page.Page, PageSize = page.PageSize, TotalCount = page.TotalCount };
     }
 
     public async Task<VisitPassDto?> GetVisitPassAsync(Guid visitPassId, CancellationToken cancellationToken = default)
@@ -923,16 +932,52 @@ public sealed class GateService(
         return pass is null ? null : ToDto(pass);
     }
 
-    public async Task<PagedData<VisitorDto>> ListVisitorsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<VisitorDto>> ListVisitorsAsync(ListQueryParameters parameters, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
         // The pending-approval queue (Req 24.2): tenant/self-scoped; a status=pending filter surfaces
         // the walk-ins a resident must approve/reject for their own unit.
-        var page = await db.Visitors.AsNoTracking().ToPagedResultAsync(
+        var query = db.Visitors.AsNoTracking();
+        if (organizationId is { } orgId)
+        {
+            var communityIds = await CommunityIdsForOrgAsync(orgId, cancellationToken);
+            query = query.Where(v => communityIds.Contains(v.CommunityId));
+        }
+
+        var page = await query.ToPagedResultAsync(
             parameters, VisitorQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
         var withUnits = await WithUnitNumbersAsync(page.Items, cancellationToken);
-        return new PagedData<VisitorDto> { Items = withUnits, Page = page.Page, PageSize = page.PageSize, TotalCount = page.TotalCount };
+        var withOrg = await WithOrganizationNamesAsync(withUnits, v => v.CommunityId, (v, n) => v with { OrganizationName = n }, cancellationToken);
+        return new PagedData<VisitorDto> { Items = withOrg, Page = page.Page, PageSize = page.PageSize, TotalCount = page.TotalCount };
+    }
+
+    private async Task<List<Guid>> CommunityIdsForOrgAsync(Guid organizationId, CancellationToken cancellationToken) =>
+        await db.Communities.IgnoreQueryFilters().AsNoTracking()
+            .Where(c => c.OrganizationId == organizationId)
+            .Select(c => c.Id)
+            .ToListAsync(cancellationToken);
+
+    // Resolve the organization NAME for a batch of DTOs in one join (no N+1), keyed by each row's
+    // CommunityId → Community.OrganizationId → Organization.Name. IgnoreQueryFilters so the display
+    // name is independent of the caller's tenant scope (mirrors WithUnitNumbersAsync).
+    private async Task<IReadOnlyList<T>> WithOrganizationNamesAsync<T>(
+        IReadOnlyList<T> items,
+        Func<T, Guid> communityIdOf,
+        Func<T, string, T> withName,
+        CancellationToken cancellationToken)
+    {
+        if (items.Count == 0) return items;
+        var communityIds = items.Select(communityIdOf).Distinct().ToList();
+        var orgNameByCommunity = await db.Communities.IgnoreQueryFilters().AsNoTracking()
+            .Where(c => communityIds.Contains(c.Id))
+            .Join(db.Organizations.IgnoreQueryFilters().AsNoTracking(),
+                c => c.OrganizationId, o => o.Id,
+                (c, o) => new { c.Id, OrgName = o.Name })
+            .ToDictionaryAsync(x => x.Id, x => x.OrgName, cancellationToken);
+        return items
+            .Select(i => orgNameByCommunity.TryGetValue(communityIdOf(i), out var n) ? withName(i, n) : i)
+            .ToList();
     }
 
     public async Task<VisitorDto?> GetVisitorAsync(Guid visitorId, CancellationToken cancellationToken = default)

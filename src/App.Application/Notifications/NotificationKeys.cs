@@ -53,6 +53,13 @@ public static class NotificationTemplateKeys
     public const string VisitorExpired = "visitor.expired";
 
     /// <summary>
+    /// The branded email shell (logo/header/footer) wrapping every email body. Not a sendable
+    /// notification — its <c>EmailHtmlTemplate</c> holds the layout with a <c>{content}</c> slot that
+    /// each message's rendered inner HTML is injected into.
+    /// </summary>
+    public const string EmailLayout = "email.layout";
+
+    /// <summary>
     /// A high-severity incident met the configured escalation threshold → notify the responders
     /// (Req 27.2). Category <c>responder</c> (mandatory — security staff must always receive it);
     /// fills {category}, {severity}, {location}.

@@ -24,6 +24,11 @@ public sealed class NotificationTemplateEntityConfiguration : IEntityTypeConfigu
         builder.Property(t => t.Category).IsRequired().HasMaxLength(100);
         builder.Property(t => t.TitleTemplate).IsRequired().HasMaxLength(400);
         builder.Property(t => t.BodyTemplate).IsRequired().HasMaxLength(2000);
+        builder.Property(t => t.EmailSubjectTemplate).HasMaxLength(400);
+        builder.Property(t => t.EmailHtmlTemplate).HasMaxLength(8000);
+        builder.Property(t => t.SmsTemplate).HasMaxLength(1000);
+        builder.Property(t => t.WhatsappTemplateName).HasMaxLength(200);
+        builder.Property(t => t.WhatsappVarsJson).HasMaxLength(4000);
         builder.Property(t => t.Scope).HasConversion<int>();
         builder.Property(t => t.CategoryKind).HasConversion<int>();
         builder.Property(t => t.Channels).HasConversion<int>();
@@ -336,6 +341,43 @@ public sealed class NotificationTemplateEntityConfiguration : IEntityTypeConfigu
             NotificationCategories.Event,
             NotificationCategoryKind.Optional,
             NotificationChannel.Push);
+
+        yield return EmailLayoutTemplate();
+    }
+
+    private static NotificationTemplate EmailLayoutTemplate()
+    {
+        var html =
+            "<!DOCTYPE html><html><body style=\"margin:0;padding:0;background:#f1f5f9;\">" +
+            "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f1f5f9;padding:24px 0;\"><tr><td align=\"center\">" +
+            "<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;max-width:92%;background:#ffffff;border-radius:16px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;\">" +
+            "<tr><td style=\"background:#0b261d;padding:20px 28px;\" align=\"left\">" +
+            "<img src=\"{logoUrl}\" width=\"40\" height=\"40\" alt=\"AanganOS\" style=\"vertical-align:middle;border-radius:8px;\" />" +
+            "<span style=\"color:#ffffff;font-size:20px;font-weight:bold;margin-left:10px;vertical-align:middle;\">Aangan<span style=\"color:#8ef0c0;\">OS</span></span>" +
+            "</td></tr>" +
+            "<tr><td style=\"padding:28px;color:#0f172a;font-size:15px;line-height:1.6;\">{content}</td></tr>" +
+            "<tr><td style=\"padding:18px 28px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.5;border-top:1px solid #e2e8f0;\">" +
+            "You are receiving this email from {communityName}. This is an automated message from AanganOS." +
+            "</td></tr>" +
+            "</table></td></tr></table></body></html>";
+
+        return new NotificationTemplate
+        {
+            Id = DeterministicGuid($"notif-template|{NotificationTemplateKeys.EmailLayout}"),
+            Key = NotificationTemplateKeys.EmailLayout,
+            Scope = ConfigScope.Platform,
+            CommunityId = null,
+            Category = NotificationCategories.Account,
+            CategoryKind = NotificationCategoryKind.Mandatory,
+            TitleTemplate = "Email layout",
+            BodyTemplate = "Branded email shell with a {content} slot.",
+            EmailHtmlTemplate = html,
+            Channels = NotificationChannel.Email,
+            IsActive = true,
+            CreatedAtUtc = SeedTimestamp,
+            CreatedBy = "seed",
+            RowVersion = [],
+        };
     }
 
     private static NotificationTemplate Platform(

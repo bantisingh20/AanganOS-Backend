@@ -19,7 +19,9 @@ public sealed record VisitPassDto(
     DateTime ValidUntilUtc,
     int MaxUses,
     int UseCount,
-    string Status);
+    string Status,
+    string? HostUnitNumber = null,
+    string? OrganizationName = null);
 
 public sealed record CreateVisitPassResult(VisitPassDto Pass, string Otp);
 
@@ -44,7 +46,8 @@ public sealed record VisitorDto(
     DateTime? ApprovalDecisionAtUtc,
     bool IsAdmittable,
     string? QrToken = null,
-    string? HostUnitNumber = null);
+    string? HostUnitNumber = null,
+    string? OrganizationName = null);
 
 public sealed record VerifyVisitPassResult(
     bool Accepted,

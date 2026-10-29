@@ -157,6 +157,7 @@ public static class DependencyInjection
        
         services.TryAddScoped<ICommunicationPreferences, DefaultCommunicationPreferences>();
         services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<App.Application.Notifications.INotificationTemplateAdminService, Notifications.NotificationTemplateAdminService>();
         services.AddScoped<App.Application.Notifications.INotificationInboxService, Notifications.NotificationInboxService>();
 
         services.AddOptions<NotificationWorkerOptions>()

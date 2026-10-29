@@ -1,4 +1,7 @@
 using App.Application.Notifications;
+using App.Application.Config;
+using App.Application.Messaging;
+using App.Application.Notifications;
 using App.Domain.Notifications;
 using App.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -34,8 +37,13 @@ namespace App.Infrastructure.Notifications;
 public sealed class NotificationService(
     AppDbContext db,
     INotificationTemplateRenderer renderer,
-    ICommunicationPreferences preferences) : INotificationService
+    ICommunicationPreferences preferences,
+    IMessageSender messages,
+    IConfigService config) : INotificationService
 {
+    private const string EmailLogoUrlKey = "notification.emailLogoUrl";
+    private const string DefaultEmailLogoUrl = "https://aanganosapi.sharcnix.com/assets/email-logo.png";
+
     public async Task<EnqueueOutcome> EnqueueAsync(NotificationRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -79,8 +87,96 @@ public sealed class NotificationService(
         // operation's own SaveChanges/transaction commits it atomically (Req 11.5).
         await db.Set<NotificationOutboxMessage>().AddAsync(message, cancellationToken);
 
+        // Bridge to the message outbox for the non-push channels this template targets (Req 64). The
+        // enqueue is Add-only (no save) so it commits atomically with the push row above. Suppressed
+        // (opted-out optional) notifications don't fan out to email/SMS either.
+        if (allowed)
+        {
+            await FanOutToMessageChannelsAsync(template, request, title, body, cancellationToken);
+        }
+
         return allowed ? EnqueueOutcome.Queued : EnqueueOutcome.SuppressedByPreference;
     }
+
+    private async Task FanOutToMessageChannelsAsync(
+        NotificationTemplate template,
+        NotificationRequest request,
+        string renderedTitle,
+        string renderedBody,
+        CancellationToken cancellationToken)
+    {
+        var wantsEmail = template.Channels.HasFlag(NotificationChannel.Email);
+        var wantsSms = template.Channels.HasFlag(NotificationChannel.Sms);
+        var wantsWhatsApp = template.Channels.HasFlag(NotificationChannel.WhatsApp);
+        if (!wantsEmail && !wantsSms && !wantsWhatsApp)
+        {
+            return;
+        }
+
+        var contact = await db.Set<App.Domain.Identity.User>().AsNoTracking()
+            .Where(u => u.Id == request.RecipientUserId)
+            .Select(u => new { u.Email, u.Phone })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (contact is null)
+        {
+            return;
+        }
+
+        if (wantsEmail && !string.IsNullOrWhiteSpace(contact.Email))
+        {
+            var subject = renderer.Render(
+                string.IsNullOrWhiteSpace(template.EmailSubjectTemplate) ? template.TitleTemplate : template.EmailSubjectTemplate,
+                request.Placeholders);
+            var inner = string.IsNullOrWhiteSpace(template.EmailHtmlTemplate)
+                ? HtmlEscape(renderedBody)
+                : renderer.Render(template.EmailHtmlTemplate, request.Placeholders);
+            var html = await WrapInEmailLayoutAsync(inner, request, cancellationToken);
+            await messages.QueueEmailAsync(contact.Email!, subject, html, cancellationToken);
+        }
+
+        if (wantsSms && !string.IsNullOrWhiteSpace(contact.Phone))
+        {
+            var sms = string.IsNullOrWhiteSpace(template.SmsTemplate)
+                ? renderedBody
+                : renderer.Render(template.SmsTemplate, request.Placeholders);
+            await messages.QueueSmsAsync(contact.Phone!, sms, cancellationToken);
+        }
+
+        if (wantsWhatsApp && !string.IsNullOrWhiteSpace(contact.Phone))
+        {
+            var wa = string.IsNullOrWhiteSpace(template.SmsTemplate)
+                ? renderedBody
+                : renderer.Render(template.SmsTemplate, request.Placeholders);
+            await messages.QueueWhatsAppAsync(contact.Phone!, wa, cancellationToken);
+        }
+    }
+
+    private async Task<string> WrapInEmailLayoutAsync(string innerHtml, NotificationRequest request, CancellationToken cancellationToken)
+    {
+        var layout = await db.Set<NotificationTemplate>().AsNoTracking()
+            .Where(t => t.Key == NotificationTemplateKeys.EmailLayout && t.CommunityId == null && t.IsActive)
+            .Select(t => t.EmailHtmlTemplate)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(layout))
+        {
+            return innerHtml;
+        }
+
+        var logoUrl = await config.GetStringAsync(EmailLogoUrlKey, DefaultEmailLogoUrl, cancellationToken: cancellationToken);
+        var communityName = request.Placeholders is not null && request.Placeholders.TryGetValue("communityName", out var cn) && !string.IsNullOrWhiteSpace(cn)
+            ? cn
+            : "your community";
+        var shell = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["content"] = innerHtml,
+            ["logoUrl"] = logoUrl,
+            ["communityName"] = communityName,
+        };
+        return renderer.Render(layout, shell);
+    }
+
+    private static string HtmlEscape(string text) =>
+        System.Net.WebUtility.HtmlEncode(text ?? string.Empty).Replace("\n", "<br/>");
 
     /// <summary>
     /// Resolve the active template for the key: community override → platform default (Req 8.1/8.3

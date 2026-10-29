@@ -68,6 +68,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseStaticFiles();
+
 app.UseAuthentication();
 
 app.UseAuthorization();
@@ -80,6 +82,7 @@ app.MapObservabilityEndpoints();
 app.MapPipelineDemoEndpoints();
 
 app.MapConfigEndpoints();
+app.MapNotificationTemplateEndpoints();
 
 // Audit read endpoint (Task 4.1): tenant-scoped, paginated audit-log query (View-gated).
 app.MapAuditEndpoints();

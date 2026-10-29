@@ -97,6 +97,7 @@ public static class GateEndpoints
                 string? sort,
                 string? status,
                 Guid? hostUnitId,
+                Guid? organizationId,
                 int? page,
                 int? pageSize,
                 IGateService gate,
@@ -106,7 +107,7 @@ public static class GateEndpoints
                 AddEquals(filters, "status", status);
                 AddEquals(filters, "hostUnitId", hostUnitId);
 
-                var data = await gate.ListVisitPassesAsync(BuildParameters(page, pageSize, search, sort, filters), ct);
+                var data = await gate.ListVisitPassesAsync(BuildParameters(page, pageSize, search, sort, filters), organizationId, ct);
                 return Results.Ok(ApiResult<PagedData<VisitPassDto>>.Ok(data, string.Empty));
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "VisitPass"));
@@ -190,6 +191,7 @@ public static class GateEndpoints
                 string? status,
                 string? category,
                 Guid? hostUnitId,
+                Guid? organizationId,
                 DateTime? fromDate,
                 DateTime? toDate,
                 int? page,
@@ -212,7 +214,7 @@ public static class GateEndpoints
                     filters.Add(new FilterTerm("createdAtUtc", FilterOperator.LessThanOrEqual, t.ToUniversalTime().ToString("o")));
                 }
 
-                var data = await gate.ListVisitorsAsync(BuildParameters(page, pageSize, search, sort, filters), ct);
+                var data = await gate.ListVisitorsAsync(BuildParameters(page, pageSize, search, sort, filters), organizationId, ct);
                 return Results.Ok(ApiResult<PagedData<VisitorDto>>.Ok(data, string.Empty));
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Visitor"));

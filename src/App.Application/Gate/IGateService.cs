@@ -39,11 +39,11 @@ public interface IGateService
 
     Task<VehicleLookupResult> LookupVehicleAsync(string plate, CancellationToken cancellationToken = default);
    
-    Task<PagedData<VisitPassDto>> ListVisitPassesAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default);
+    Task<PagedData<VisitPassDto>> ListVisitPassesAsync(ListQueryParameters parameters, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
     Task<VisitPassDto?> GetVisitPassAsync(Guid visitPassId, CancellationToken cancellationToken = default);
 
-    Task<PagedData<VisitorDto>> ListVisitorsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default);
+    Task<PagedData<VisitorDto>> ListVisitorsAsync(ListQueryParameters parameters, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
     Task<VisitorDto?> GetVisitorAsync(Guid visitorId, CancellationToken cancellationToken = default);
 

@@ -47,6 +47,22 @@ public class NotificationTemplate : PlatformEntity
     /// <summary>Channels this template targets (bit flags, Req 64). Phase 1 dispatches the Push bit.</summary>
     public NotificationChannel Channels { get; set; } = NotificationChannel.Push;
 
+    /// <summary>Email subject with {placeholder} tokens. Null → falls back to TitleTemplate.</summary>
+    public string? EmailSubjectTemplate { get; set; }
+
+    /// <summary>Email inner HTML content with {placeholder} tokens, wrapped by the email.layout shell.
+    /// Null → falls back to BodyTemplate (plain text).</summary>
+    public string? EmailHtmlTemplate { get; set; }
+
+    /// <summary>SMS text with {placeholder} tokens (plain, short). Null → falls back to BodyTemplate.</summary>
+    public string? SmsTemplate { get; set; }
+
+    /// <summary>Approved WhatsApp (BSP) template name to send outside the 24h window. Null → use BodyTemplate as session text.</summary>
+    public string? WhatsappTemplateName { get; set; }
+
+    /// <summary>JSON mapping of WhatsApp template variables (ordered placeholders) for the approved template.</summary>
+    public string? WhatsappVarsJson { get; set; }
+
     /// <summary>When false the template is retired: kept for history but not offered for new sends.</summary>
     public bool IsActive { get; set; } = true;
 }

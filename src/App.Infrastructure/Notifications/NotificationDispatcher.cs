@@ -40,12 +40,12 @@ public sealed class NotificationDispatcher(IOneSignalClient oneSignalClient) : I
             return DispatchResult.PermanentFailure("No active device registered for recipient");
         }
 
-        // Phase 1: push only. TODO (Req 64, later phases): fan out to SMS/email/WhatsApp dispatchers
-        // for the other bits set in message.Channels.
+        // Push is dispatched here; email/SMS/WhatsApp are fanned out to the MessageOutbox at enqueue
+        // time (NotificationService). A message with no Push bit has nothing to do here — treat it as
+        // a successful no-op so it isn't left spinning as a failure in the push outbox.
         if (!message.Channels.HasFlag(NotificationChannel.Push))
         {
-            // Nothing dispatchable in Phase 1 for a non-push-only message; don't spin retries on it.
-            return DispatchResult.PermanentFailure("No push channel on message (Phase 1 dispatches push only)");
+            return DispatchResult.Success();
         }
 
         var result = await oneSignalClient.SendPushAsync(
