@@ -180,7 +180,11 @@ public sealed record EntryExitEventDto(
     string Category,
     string? VehicleNumber,
     DateTime EntryTsUtc,
-    DateTime? ExitTsUtc);
+    DateTime? ExitTsUtc,
+    string? HostUnitNumber = null,
+    string? VisitorPhone = null,
+    Guid? PhotoFileId = null,
+    string? WhomToMeet = null);
 
 public sealed record RecordEntryRequest(
     Guid? VisitorId,

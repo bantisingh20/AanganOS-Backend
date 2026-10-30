@@ -1002,14 +1002,56 @@ public sealed class GateService(
             .ToList();
     }
 
-    public Task<PagedData<EntryExitEventDto>> ListEntryExitEventsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<EntryExitEventDto>> ListEntryExitEventsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        // The entry/exit log (Req 25.4, 25.5): tenant-scoped, newest-first by default riding the
-        // (CommunityId, EntryTsUtc) index; the open filter shows currently-on-site visitors.
-        return db.EntryExitEvents.AsNoTracking().ToPagedResultAsync(
+        var page = await db.EntryExitEvents.AsNoTracking().ToPagedResultAsync(
             parameters, EntryExitEventQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+        var enriched = await WithAuthorizationDetailAsync(page.Items, cancellationToken);
+        return new PagedData<EntryExitEventDto> { Items = enriched, Page = page.Page, PageSize = page.PageSize, TotalCount = page.TotalCount };
+    }
+
+    private async Task<IReadOnlyList<EntryExitEventDto>> WithAuthorizationDetailAsync(IReadOnlyList<EntryExitEventDto> items, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0) return items;
+
+        var visitorIds = items.Where(e => e.VisitorId is not null).Select(e => e.VisitorId!.Value).Distinct().ToList();
+        var passIds = items.Where(e => e.VisitPassId is not null).Select(e => e.VisitPassId!.Value).Distinct().ToList();
+
+        var visitorDetail = visitorIds.Count == 0
+            ? new Dictionary<Guid, (Guid? HostUnitId, string? Phone, Guid? PhotoFileId, string? WhomToMeet)>()
+            : await db.Visitors.IgnoreQueryFilters().AsNoTracking()
+                .Where(v => visitorIds.Contains(v.Id))
+                .Select(v => new { v.Id, v.UnitId, v.Phone, v.PhotoFileId, v.WhomToMeet })
+                .ToDictionaryAsync(v => v.Id, v => (HostUnitId: v.UnitId, Phone: v.Phone, PhotoFileId: v.PhotoFileId, WhomToMeet: v.WhomToMeet), cancellationToken);
+
+        var passDetail = passIds.Count == 0
+            ? new Dictionary<Guid, (Guid? HostUnitId, string? Phone, Guid? PhotoFileId, string? WhomToMeet)>()
+            : await db.VisitPasses.IgnoreQueryFilters().AsNoTracking()
+                .Where(p => passIds.Contains(p.Id))
+                .Select(p => new { p.Id, p.UnitId, p.Phone, p.PhotoFileId, p.WhomToMeet })
+                .ToDictionaryAsync(p => p.Id, p => (HostUnitId: p.UnitId, Phone: p.Phone, PhotoFileId: p.PhotoFileId, WhomToMeet: p.WhomToMeet), cancellationToken);
+
+        var unitIds = visitorDetail.Values.Select(d => d.HostUnitId)
+            .Concat(passDetail.Values.Select(d => d.HostUnitId))
+            .Where(id => id is not null).Select(id => id!.Value)
+            .Distinct().ToList();
+        var unitNumbers = unitIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await db.Units.IgnoreQueryFilters().AsNoTracking()
+                .Where(u => unitIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.UnitNumber, cancellationToken);
+
+        return items.Select(e =>
+        {
+            (Guid? HostUnitId, string? Phone, Guid? PhotoFileId, string? WhomToMeet)? d = null;
+            if (e.VisitorId is { } vid && visitorDetail.TryGetValue(vid, out var vd)) d = vd;
+            else if (e.VisitPassId is { } pid && passDetail.TryGetValue(pid, out var pd)) d = pd;
+            if (d is null) return e;
+            var unitNo = d.Value.HostUnitId is { } uid && unitNumbers.TryGetValue(uid, out var n) ? n : null;
+            return e with { HostUnitNumber = unitNo, VisitorPhone = d.Value.Phone, PhotoFileId = d.Value.PhotoFileId, WhomToMeet = d.Value.WhomToMeet };
+        }).ToList();
     }
 
     public Task<PagedData<RecurringVisitorDto>> ListRecurringVisitorsAsync(ListQueryParameters parameters, bool? active = null, CancellationToken cancellationToken = default)
