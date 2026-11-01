@@ -14,6 +14,30 @@ builder.Services.AddOpenApi();
 
 builder.Services.AddSingleton(EnvelopeJson.CreateOptions());
 
+// MVC controllers (HMS-style API layer). Controller JSON uses the same envelope serializer options,
+// and an invalid model state is converted into the SAME ValidationException the minimal-API filter
+// threw, so the VALIDATION_ERROR envelope is identical across both surfaces during migration.
+builder.Services
+    .AddControllers(options => options.SuppressAsyncSuffixInActionNames = false)
+    .AddJsonOptions(options => EnvelopeJson.CopyInto(options.JsonSerializerOptions));
+
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var fieldErrors = context.ModelState
+            .Where(kvp => kvp.Value is { Errors.Count: > 0 })
+            .SelectMany(kvp => kvp.Value!.Errors.Select(e => new App.Contracts.Errors.FieldError(
+                ToCamelCase(kvp.Key),
+                string.IsNullOrWhiteSpace(e.ErrorMessage) ? "Invalid value." : e.ErrorMessage)))
+            .ToList();
+        throw new App.Application.Exceptions.ValidationException(fieldErrors);
+
+        static string ToCamelCase(string name) =>
+            string.IsNullOrEmpty(name) || char.IsLower(name[0]) ? name : char.ToLowerInvariant(name[0]) + name[1..];
+    };
+});
+
 builder.Services.AddInfrastructure(builder.Configuration);
 
 if (builder.Configuration.GetValue<bool>("Notification:RunOutboxWorkerInApi"))
@@ -77,38 +101,18 @@ app.UsePermissionAuthorization();
 
 app.UseRateLimiter();
 
+app.MapControllers();
+
 app.MapObservabilityEndpoints();
 
 app.MapPipelineDemoEndpoints();
 
-app.MapConfigEndpoints();
-app.MapNotificationTemplateEndpoints();
-
-// Audit read endpoint (Task 4.1): tenant-scoped, paginated audit-log query (View-gated).
-app.MapAuditEndpoints();
-app.MapMessageOutboxEndpoints();
-app.MapNotificationOutboxAdminEndpoints();
-app.MapMenuEndpoints();
-app.MapAdminUserEndpoints();
-
-app.MapFileEndpoints();
-
 app.MapAuthEndpoints();
-app.MapOnboardingEndpoints();
 app.MapResidentOnboardingEndpoints();
-// RBAC management: every endpoint carries [RequirePermission] on its (Action, ResourceType) (Req 4.1).
-app.MapUserEndpoints();
-app.MapRoleEndpoints();
-app.MapPermissionEndpoints();
-app.MapUserRoleEndpoints();
 
-app.MapOrganizationEndpoints();
-app.MapCommunityEndpoints();
-app.MapHierarchyEndpoints();
 app.MapUnitEndpoints();
 
 app.MapResidentEndpoints();
-app.MapUnitHistoryEndpoints();
 app.MapResidentAssetEndpoints();
 
 app.MapGateEndpoints();
@@ -122,11 +126,9 @@ app.MapMaintenanceEndpoints();
 app.MapAmenityEndpoints();
 app.MapParkingEndpoints();
 app.MapMaintenanceBillingEndpoints();
-app.MapMyTasksEndpoints();
 
 
-app.MapAnnouncementEndpoints();
-app.MapNotificationEndpoints();
+
 
 if (app.Environment.IsDevelopment())
 {

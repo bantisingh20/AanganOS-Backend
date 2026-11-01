@@ -19,4 +19,12 @@ public static class EnvelopeJson
 
     /// <summary>A shared, immutable default instance for convenience.</summary>
     public static JsonSerializerOptions Default { get; } = CreateOptions();
+
+    /// <summary>Apply the envelope naming/null policy onto an existing options instance (e.g. MVC's).</summary>
+    public static void CopyInto(JsonSerializerOptions target)
+    {
+        target.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        target.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
+        target.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+    }
 }
