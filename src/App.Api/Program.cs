@@ -107,16 +107,6 @@ app.MapObservabilityEndpoints();
 
 app.MapPipelineDemoEndpoints();
 
-app.MapResidentEndpoints();
-
-app.MapGateEndpoints();
-app.MapSecurityOpsEndpoints();
-
-app.MapParcelEndpoints();
-
-app.MapMaintenanceEndpoints();
-
-app.MapAmenityEndpoints();
 
 
 
