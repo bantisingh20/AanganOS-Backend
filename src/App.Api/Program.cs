@@ -107,25 +107,16 @@ app.MapObservabilityEndpoints();
 
 app.MapPipelineDemoEndpoints();
 
-app.MapAuthEndpoints();
-app.MapResidentOnboardingEndpoints();
-
-app.MapUnitEndpoints();
-
 app.MapResidentEndpoints();
-app.MapResidentAssetEndpoints();
 
 app.MapGateEndpoints();
 app.MapSecurityOpsEndpoints();
 
 app.MapParcelEndpoints();
 
-app.MapHelpdeskEndpoints();
 app.MapMaintenanceEndpoints();
 
 app.MapAmenityEndpoints();
-app.MapParkingEndpoints();
-app.MapMaintenanceBillingEndpoints();
 
 
 
