@@ -42,6 +42,7 @@ public sealed class ResidentService(
             .Filterable("residentType", r => r.ResidentType)
             .Filterable("verificationStatus", r => r.VerificationStatus)
             .Filterable("userId", r => r.UserId)
+            .Filterable("communityId", r => r.CommunityId)
             .Searchable(r => r.Name)
             .Searchable(r => r.Email)
             .Searchable(r => r.Phone);
@@ -167,20 +168,26 @@ public sealed class ResidentService(
             .Distinct()
             .ToList();
 
-        if (userIds.Count == 0)
-        {
-            return paged;
-        }
+        var statusById = userIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await db.Users.AsNoTracking()
+                .Where(u => userIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.Status })
+                .ToDictionaryAsync(u => u.Id, u => u.Status.ToString(), cancellationToken);
 
-        var statusById = await db.Users.AsNoTracking()
-            .Where(u => userIds.Contains(u.Id))
-            .Select(u => new { u.Id, u.Status })
-            .ToDictionaryAsync(u => u.Id, u => u.Status.ToString(), cancellationToken);
+        var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
+            db, paged.Items.Select(r => r.CommunityId), cancellationToken);
 
         var items = paged.Items
-            .Select(r => r.UserId is { } uid && statusById.TryGetValue(uid, out var s)
-                ? r with { LoginStatus = s }
-                : r)
+            .Select(r =>
+            {
+                var withStatus = r.UserId is { } uid && statusById.TryGetValue(uid, out var s)
+                    ? r with { LoginStatus = s }
+                    : r;
+                return names.TryGetValue(r.CommunityId, out var n)
+                    ? withStatus with { CommunityName = n.Community, OrganizationName = n.Organization }
+                    : withStatus;
+            })
             .ToList();
 
         return new PagedData<ResidentDto>

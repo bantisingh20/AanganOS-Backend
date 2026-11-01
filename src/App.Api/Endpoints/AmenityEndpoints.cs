@@ -37,13 +37,13 @@ public static class AmenityEndpoints
 
         group.MapGet("/", async (
                 string? search, string? sort, string? amenityType, string? status, Guid? communityId,
-                int? page, int? pageSize, IAmenityService amenities, CancellationToken ct) =>
+                Guid? organizationId, int? page, int? pageSize, IAmenityService amenities, CancellationToken ct) =>
             {
                 var filters = new List<FilterTerm>();
                 AddEquals(filters, "amenityType", amenityType);
                 AddEquals(filters, "status", status);
                 AddEquals(filters, "communityId", communityId);
-                var data = await amenities.ListAmenitiesAsync(BuildParameters(page, pageSize, search, sort, filters), ct);
+                var data = await amenities.ListAmenitiesAsync(BuildParameters(page, pageSize, search, sort, filters), organizationId, ct);
                 return Results.Ok(ApiResult<PagedData<AmenityDto>>.Ok(data, string.Empty));
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Amenity"));

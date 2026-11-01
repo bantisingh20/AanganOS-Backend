@@ -66,6 +66,7 @@ public sealed class HelpdeskService(
             .Filterable("subcategory", t => t.Subcategory)
             .Filterable("priority", t => t.Priority)
             .Filterable("hostUnitId", t => t.UnitId)
+            .Filterable("communityId", t => t.CommunityId)
             .Searchable(t => t.Title)
             .Searchable(t => t.Description);
 
@@ -546,7 +547,7 @@ public sealed class HelpdeskService(
         }
     }
 
-    public Task<PagedData<TicketDto>> ListTicketsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<TicketDto>> ListTicketsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
@@ -555,8 +556,23 @@ public sealed class HelpdeskService(
         // tickets in their authorized communities. The allow-listed query config fixes the
         // sort/filter/search surface; AsNoTracking projection, page size clamped by the shared policy
         // — mirrors ListParcelsAsync.
-        return db.Tickets.AsNoTracking().ToPagedResultAsync(
+        var paged = await db.Tickets.AsNoTracking().ToPagedResultAsync(
             parameters, TicketQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+
+        var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
+            db, paged.Items.Select(t => t.CommunityId), cancellationToken);
+
+        return new PagedData<TicketDto>
+        {
+            Items = paged.Items
+                .Select(t => names.TryGetValue(t.CommunityId, out var n)
+                    ? t with { CommunityName = n.Community, OrganizationName = n.Organization }
+                    : t)
+                .ToList(),
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            TotalCount = paged.TotalCount,
+        };
     }
 
     public async Task<IReadOnlyList<TicketAttachmentDto>> GetTicketAttachmentsAsync(Guid ticketId, CancellationToken cancellationToken = default)

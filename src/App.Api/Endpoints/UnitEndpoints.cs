@@ -9,17 +9,7 @@ using App.Domain.Identity;
 
 namespace App.Api.Endpoints;
 
-/// <summary>
-/// HTTP surface over <see cref="IUnitService"/> (Task 11.3) — units within a community (Req 14.1–14.6).
-/// Every endpoint uses the <see cref="ApiResult{T}"/> envelope (Req 9.1), carries a
-/// <see cref="RequirePermissionAttribute"/> on the <c>Unit</c> resource type for its action
-/// (Req 4.1), validates write bodies (Req 9.2), applies the "write" rate-limit policy to mutations
-/// (Req 65.5), and the list is paginated/filter(by status)/sort/search through the shared query
-/// infra (Req 14.5, 9.3). The list is <b>scoped to the caller's authorized communities</b> by the EF
-/// global tenant query filter — not a bespoke predicate here — and the status filter rides the
-/// <c>(CommunityId, UnitStatus)</c> index. Duplicate unit-number (CONFLICT), invalid type/status
-/// (VALIDATION_ERROR) and concurrency (CONFLICT) are surfaced by the service / data layer.
-/// </summary>
+
 public static class UnitEndpoints
 {
     public static IEndpointRouteBuilder MapUnitEndpoints(this IEndpointRouteBuilder app)
@@ -58,6 +48,7 @@ public static class UnitEndpoints
                 string? floor,
                 Guid? hierarchyNodeId,
                 Guid? communityId,
+                Guid? organizationId,
                 bool? availableForOwner,
                 int? page,
                 int? pageSize,
@@ -95,7 +86,7 @@ public static class UnitEndpoints
                     Sort = EndpointSort.Parse(sort),
                 };
 
-                var data = await units.ListAsync(parameters, availableForOwner ?? false, ct);
+                var data = await units.ListAsync(parameters, availableForOwner ?? false, organizationId, ct);
                 return Results.Ok(ApiResult<PagedData<UnitDto>>.Ok(data, string.Empty));
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Unit"));

@@ -69,6 +69,7 @@ public static class HelpdeskEndpoints
                 string? priority,
                 Guid? hostUnitId,
                 Guid? assignedToUserId,
+                Guid? communityId,
                 int? page,
                 int? pageSize,
                 IHelpdeskService helpdesk,
@@ -81,6 +82,7 @@ public static class HelpdeskEndpoints
                 AddEquals(filters, "priority", priority);
                 AddEquals(filters, "hostUnitId", hostUnitId);
                 AddEquals(filters, "assignedToUserId", assignedToUserId);
+                AddEquals(filters, "communityId", communityId);
 
                 var data = await helpdesk.ListTicketsAsync(BuildParameters(page, pageSize, search, sort, filters), ct);
                 return Results.Ok(ApiResult<PagedData<TicketDto>>.Ok(data, string.Empty));

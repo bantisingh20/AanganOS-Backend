@@ -42,6 +42,7 @@ public sealed class AnnouncementService(
             .Sortable("title", a => a.Title)
             .Sortable("category", a => a.Category)
             .Filterable("category", a => a.Category)
+            .Filterable("communityId", a => a.CommunityId)
             .Filterable("publishedAtUtc", a => a.PublishedAtUtc)
             .Searchable(a => a.Title)
             .Searchable(a => a.Body);
@@ -66,8 +67,23 @@ public sealed class AnnouncementService(
         {
             q = q.Where(a => a.IsActive);
         }
-        return await q.ToPagedResultAsync(
+        var paged = await q.ToPagedResultAsync(
             parameters, AnnouncementQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+
+        var names = await UnitService.ResolveCommunityOrgNamesAsync(
+            db, paged.Items.Select(a => a.CommunityId), cancellationToken);
+
+        return new PagedData<AnnouncementDto>
+        {
+            Items = paged.Items
+                .Select(a => names.TryGetValue(a.CommunityId, out var n)
+                    ? a with { CommunityName = n.Community, OrganizationName = n.Organization }
+                    : a)
+                .ToList(),
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            TotalCount = paged.TotalCount,
+        };
     }
 
     public async Task<AnnouncementDto?> GetAnnouncementAsync(Guid announcementId, CancellationToken cancellationToken = default)

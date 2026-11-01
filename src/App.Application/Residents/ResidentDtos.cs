@@ -19,7 +19,9 @@ public sealed record ResidentDto(
     string? GovtIdType = null,
     string? GovtIdFrontFileId = null,
     string? GovtIdBackFileId = null,
-    string? LoginStatus = null);
+    string? LoginStatus = null,
+    string? CommunityName = null,
+    string? OrganizationName = null);
 
 
 public sealed record HouseholdMemberDto(

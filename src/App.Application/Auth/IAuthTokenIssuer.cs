@@ -34,7 +34,8 @@ public sealed record TokenIssueRequest(
     bool IsResidentSelfScoped = false,
     Guid? ResidentUnitId = null,
     Guid? HouseholdId = null,
-    IReadOnlyCollection<string>? Permissions = null);
+    IReadOnlyCollection<string>? Permissions = null,
+    Guid? OrganizationId = null);
 
 /// <summary>The signed token plus the identifiers Auth_Service records in the <c>LoginSession</c>.</summary>
 /// <param name="AccessToken">The signed JWT string returned to the client.</param>

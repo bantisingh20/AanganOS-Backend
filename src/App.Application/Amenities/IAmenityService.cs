@@ -61,7 +61,7 @@ public interface IAmenityService
     /// <c>ListAssetsAsync</c>.
     /// </summary>
     Task<App.Contracts.Envelope.PagedData<AmenityDto>> ListAmenitiesAsync(
-        App.Application.Querying.ListQueryParameters parameters, CancellationToken cancellationToken = default);
+        App.Application.Querying.ListQueryParameters parameters, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Soft-delete (archive) an amenity (Req 38.1). Requires <c>Delete</c> on <c>Amenity</c> + an

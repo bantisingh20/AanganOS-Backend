@@ -130,14 +130,31 @@ public sealed class CommunityService(
         return community is null ? null : ToDto(community);
     }
 
-    public Task<PagedData<CommunityDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<CommunityDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
         // Tenant-scoped by the global query filter (Req 12.4): a community admin sees only their own
         // community row(s); a super-admin sees across. The soft-delete filter excludes archived rows.
-        return db.Communities.AsNoTracking().ToPagedResultAsync(
+        var paged = await db.Communities.AsNoTracking().ToPagedResultAsync(
             parameters, QueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+
+        var orgIds = paged.Items.Select(c => c.OrganizationId).Distinct().ToList();
+        var orgNames = orgIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await db.Organizations.AsNoTracking().IgnoreQueryFilters()
+                .Where(o => orgIds.Contains(o.Id))
+                .ToDictionaryAsync(o => o.Id, o => o.Name, cancellationToken);
+
+        return new PagedData<CommunityDto>
+        {
+            Items = paged.Items
+                .Select(c => orgNames.TryGetValue(c.OrganizationId, out var n) ? c with { OrganizationName = n } : c)
+                .ToList(),
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            TotalCount = paged.TotalCount,
+        };
     }
 
     private static CommunityDto ToDto(CommunityEntity c) =>

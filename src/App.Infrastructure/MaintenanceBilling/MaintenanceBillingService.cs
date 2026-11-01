@@ -46,6 +46,7 @@ public sealed class MaintenanceBillingService(
             .Sortable("amount", b => b.Amount)
             .Filterable("status", b => b.Status)
             .Filterable("unitId", b => b.UnitId)
+            .Filterable("communityId", b => b.CommunityId)
             .Filterable("periodYear", b => b.PeriodYear)
             .Filterable("periodMonth", b => b.PeriodMonth);
 
@@ -302,12 +303,27 @@ public sealed class MaintenanceBillingService(
         return new GenerateBillsResult(request.CommunityId, request.PeriodYear, request.PeriodMonth, toCreate.Count, skipped);
     }
 
-    public Task<PagedData<MaintenanceBillDto>> ListBillsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<MaintenanceBillDto>> ListBillsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        return db.MaintenanceBills.AsNoTracking().ToPagedResultAsync(
+        var paged = await db.MaintenanceBills.AsNoTracking().ToPagedResultAsync(
             parameters, BillQueryConfig, b => ToDto(b), pageSizePolicy, executor, cancellationToken);
+
+        var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
+            db, paged.Items.Select(b => b.CommunityId), cancellationToken);
+
+        return new PagedData<MaintenanceBillDto>
+        {
+            Items = paged.Items
+                .Select(b => names.TryGetValue(b.CommunityId, out var n)
+                    ? b with { CommunityName = n.Community, OrganizationName = n.Organization }
+                    : b)
+                .ToList(),
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            TotalCount = paged.TotalCount,
+        };
     }
 
     public async Task<MaintenanceBillDto?> GetBillAsync(Guid billId, CancellationToken cancellationToken = default)

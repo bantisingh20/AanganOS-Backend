@@ -40,7 +40,9 @@ public sealed record MaintenanceBillDto(
     string Label,
     string Status,
     DateTime? DueDateUtc,
-    DateTime IssuedAtUtc);
+    DateTime IssuedAtUtc,
+    string? CommunityName = null,
+    string? OrganizationName = null);
 
 public sealed record GenerateBillsRequest(
     Guid CommunityId,

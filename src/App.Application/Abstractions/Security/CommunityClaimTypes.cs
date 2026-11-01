@@ -35,4 +35,7 @@ public static class CommunityClaimTypes
 
     /// <summary>A single granted permission as "ResourceType:actionInt" (repeated per grant).</summary>
     public const string Permission = "communityos:perm";
+
+    /// <summary>The user's organization id (GUID) for an OrganizationAdmin, used by the admin portal for org-scope UI. Client-only; tenancy stays community-based.</summary>
+    public const string OrganizationId = "communityos:organization_id";
 }

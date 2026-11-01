@@ -21,6 +21,7 @@ public static class AnnouncementEndpoints
                 string? search,
                 string? sort,
                 string? category,
+                Guid? communityId,
                 DateTime? fromDate,
                 bool? includeInactive,
                 int? page,
@@ -32,6 +33,10 @@ public static class AnnouncementEndpoints
                 if (!string.IsNullOrWhiteSpace(category))
                 {
                     filters.Add(new FilterTerm("category", FilterOperator.Equals, category));
+                }
+                if (communityId is { } cid)
+                {
+                    filters.Add(new FilterTerm("communityId", FilterOperator.Equals, cid.ToString()));
                 }
                 if (fromDate is not null)
                 {

@@ -86,7 +86,8 @@ public sealed class AuthService(
             userId, communityIds, isSuperAdmin, roleNames,
             Permissions: permissions,
             IsResidentSelfScoped: isResidentSelfScoped,
-            ResidentUnitId: residentUnitId));
+            ResidentUnitId: residentUnitId,
+            OrganizationId: await ResolveOrganizationIdAsync(communityIds, cancellationToken)));
 
         await EnforceSingleActiveSessionAsync(userId, communityIds, request, cancellationToken);
 
@@ -206,7 +207,8 @@ public sealed class AuthService(
             user.Id, communityIds, isSuperAdmin, roleNames,
             Permissions: permissions,
             IsResidentSelfScoped: isResidentSelfScoped,
-            ResidentUnitId: residentUnitId));
+            ResidentUnitId: residentUnitId,
+            OrganizationId: await ResolveOrganizationIdAsync(communityIds, cancellationToken)));
 
         session.TokenId = issued.TokenId;
         session.IssuedAtUtc = issued.IssuedAtUtc;
@@ -586,6 +588,20 @@ public sealed class AuthService(
             .FirstOrDefaultAsync(cancellationToken);
 
         return unitId is { } u ? (true, u) : (false, (Guid?)null);
+    }
+
+    private async Task<Guid?> ResolveOrganizationIdAsync(IReadOnlyCollection<Guid> communityIds, CancellationToken cancellationToken)
+    {
+        if (communityIds.Count == 0)
+        {
+            return null;
+        }
+
+        var first = communityIds.First();
+        return await db.Communities.IgnoreQueryFilters().AsNoTracking()
+            .Where(c => c.Id == first)
+            .Select(c => (Guid?)c.OrganizationId)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private async Task<(IReadOnlyCollection<Guid> CommunityIds, bool IsSuperAdmin, IReadOnlyCollection<string> RoleNames, IReadOnlyCollection<string> Permissions)>

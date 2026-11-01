@@ -27,7 +27,9 @@ public sealed record AmenityDto(
     string? Location,
     string? Description,
     int DefaultCapacity,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    string? CommunityName = null,
+    string? OrganizationName = null);
 
 /// <summary>
 /// Create a bookable <c>Amenity</c> (Req 38.1). The caller supplies the owning community, a name, a

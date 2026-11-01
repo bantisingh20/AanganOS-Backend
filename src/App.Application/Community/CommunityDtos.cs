@@ -11,7 +11,8 @@ public sealed record CommunityDto(
     Guid OrganizationId,
     string Name,
     string CommunityType,
-    bool IsArchived);
+    bool IsArchived,
+    string? OrganizationName = null);
 
 /// <summary>
 /// Create a community (Req 12.1) — a platform super-admin action. The generated id becomes the

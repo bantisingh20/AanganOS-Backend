@@ -66,6 +66,11 @@ public sealed class JwtAuthTokenIssuer(
             }
         }
 
+        if (request.OrganizationId is { } orgId)
+        {
+            claims.Add(new Claim(CommunityClaimTypes.OrganizationId, orgId.ToString()));
+        }
+
         if (request.IsResidentSelfScoped && request.ResidentUnitId is { } unitId)
         {
             claims.Add(new Claim(CommunityClaimTypes.ResidentUnitId, unitId.ToString()));

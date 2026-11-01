@@ -69,6 +69,7 @@ public static class MaintenanceBillingEndpoints
                 string? sort,
                 string? status,
                 Guid? unitId,
+                Guid? communityId,
                 int? periodYear,
                 int? periodMonth,
                 int? page,
@@ -79,6 +80,7 @@ public static class MaintenanceBillingEndpoints
                 var filters = new List<FilterTerm>();
                 AddEquals(filters, "status", status);
                 AddEquals(filters, "unitId", unitId);
+                AddEquals(filters, "communityId", communityId);
                 AddEquals(filters, "periodYear", periodYear);
                 AddEquals(filters, "periodMonth", periodMonth);
 

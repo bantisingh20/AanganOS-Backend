@@ -43,6 +43,7 @@ public static class ResidentEndpoints
                 string? sort,
                 string? verificationStatus,
                 string? residentType,
+                Guid? communityId,
                 int? page,
                 int? pageSize,
                 IResidentService residents,
@@ -56,6 +57,10 @@ public static class ResidentEndpoints
                 if (!string.IsNullOrWhiteSpace(residentType))
                 {
                     filters.Add(new FilterTerm("residentType", FilterOperator.Equals, residentType));
+                }
+                if (communityId is { } cid)
+                {
+                    filters.Add(new FilterTerm("communityId", FilterOperator.Equals, cid.ToString()));
                 }
 
                 var parameters = new ListQueryParameters

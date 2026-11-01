@@ -37,7 +37,9 @@ public sealed record TicketDto(
     int? Rating,
     string? FeedbackComment,
     DateTime? FeedbackAtUtc,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    string? CommunityName = null,
+    string? OrganizationName = null);
 
 /// <summary>
 /// Drive a helpdesk ticket to a new <c>Ticket_Status</c> (Req 34.1, 34.2). The caller supplies the

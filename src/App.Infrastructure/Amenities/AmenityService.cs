@@ -70,6 +70,7 @@ public sealed class AmenityService(
             .Sortable("amenityType", a => a.AmenityType)
             .Filterable("status", a => a.Status)
             .Filterable("amenityType", a => a.AmenityType)
+            .Filterable("communityId", a => a.CommunityId)
             .Searchable(a => a.Name)
             .Searchable(a => a.Code)
             .Searchable(a => a.Location);
@@ -208,7 +209,7 @@ public sealed class AmenityService(
         return amenity is null ? null : ToDto(amenity);
     }
 
-    public async Task<PagedData<AmenityDto>> ListAmenitiesAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<AmenityDto>> ListAmenitiesAsync(ListQueryParameters parameters, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
@@ -217,11 +218,29 @@ public sealed class AmenityService(
             throw new ForbiddenException("You do not have permission to view amenities.");
         }
 
-        // Tenant-scoped by the global query filter (soft-deleted rows hidden); the allow-listed query
-        // config fixes the sort/filter/search surface; AsNoTracking projection, page size clamped by
-        // the shared policy — mirrors ListAssetsAsync.
-        return await db.Amenities.AsNoTracking().ToPagedResultAsync(
+        var source = db.Amenities.AsNoTracking();
+        if (organizationId is { } orgId)
+        {
+            source = source.Where(a => db.Communities.Any(c => c.Id == a.CommunityId && c.OrganizationId == orgId));
+        }
+
+        var paged = await source.ToPagedResultAsync(
             parameters, AmenityQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+
+        var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
+            db, paged.Items.Select(a => a.CommunityId), cancellationToken);
+
+        return new PagedData<AmenityDto>
+        {
+            Items = paged.Items
+                .Select(a => names.TryGetValue(a.CommunityId, out var n)
+                    ? a with { CommunityName = n.Community, OrganizationName = n.Organization }
+                    : a)
+                .ToList(),
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            TotalCount = paged.TotalCount,
+        };
     }
 
     public async Task DeleteAmenityAsync(Guid amenityId, CancellationToken cancellationToken = default)

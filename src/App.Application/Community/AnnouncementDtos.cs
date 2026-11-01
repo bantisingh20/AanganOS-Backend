@@ -21,7 +21,9 @@ public sealed record AnnouncementDto(
     string Body,
     string Category,
     DateTime PublishedAtUtc,
-    bool IsActive);
+    bool IsActive,
+    string? CommunityName = null,
+    string? OrganizationName = null);
 
 /// <summary>
 /// Publish a new announcement (admin). The category is validated against the configurable

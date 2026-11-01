@@ -195,7 +195,7 @@ public sealed class UnitService(
         return unit is null ? null : ToDto(unit);
     }
 
-    public Task<PagedData<UnitDto>> ListAsync(ListQueryParameters parameters, bool availableForOwner = false, CancellationToken cancellationToken = default)
+    public async Task<PagedData<UnitDto>> ListAsync(ListQueryParameters parameters, bool availableForOwner = false, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
@@ -209,8 +209,49 @@ public sealed class UnitService(
                 .Any(t => t == "owner"));
         }
 
-        return source.ToPagedResultAsync(
+        if (organizationId is { } orgId)
+        {
+            source = source.Where(u => db.Communities.Any(c => c.Id == u.CommunityId && c.OrganizationId == orgId));
+        }
+
+        var paged = await source.ToPagedResultAsync(
             parameters, QueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+
+        var names = await ResolveCommunityOrgNamesAsync(
+            db, paged.Items.Select(u => u.CommunityId), cancellationToken);
+
+        return new PagedData<UnitDto>
+        {
+            Items = paged.Items
+                .Select(u => names.TryGetValue(u.CommunityId, out var n)
+                    ? u with { CommunityName = n.Community, OrganizationName = n.Organization }
+                    : u)
+                .ToList(),
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            TotalCount = paged.TotalCount,
+        };
+    }
+
+    internal static async Task<Dictionary<Guid, (string Community, string Organization)>> ResolveCommunityOrgNamesAsync(
+        AppDbContext db, IEnumerable<Guid> communityIds, CancellationToken cancellationToken)
+    {
+        var ids = communityIds.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, (string, string)>();
+        }
+
+        var rows = await db.Communities.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => ids.Contains(c.Id))
+            .Join(
+                db.Organizations.AsNoTracking().IgnoreQueryFilters(),
+                c => c.OrganizationId,
+                o => o.Id,
+                (c, o) => new { c.Id, Community = c.Name, Organization = o.Name })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(r => r.Id, r => (r.Community, r.Organization));
     }
 
     private static UnitDto ToDto(Unit u) =>
