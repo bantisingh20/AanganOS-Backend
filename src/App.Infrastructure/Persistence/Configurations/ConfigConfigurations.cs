@@ -1320,6 +1320,21 @@ public sealed class NotificationTemplateEntityConfiguration : IEntityTypeConfigu
             "Account approved",
             "Hi {residentName}, your account for {communityName} has been approved.");
 
+        // Society admin activated (Suspended -> Active) by a PowerUser — the approval gate for a
+        // self-registered society. Account/mandatory; targets Email + Push so the admin is emailed
+        // the portal URL + sign-in guidance. Editable from the Notification Templates admin page.
+        yield return Platform(
+            NotificationTemplateKeys.SocietyActivated,
+            "Your society \"{societyName}\" is now active",
+            "Hi {name}, good news — {societyName} has been approved and activated.\n\n" +
+            "Admin portal: {portalUrl}\n" +
+            "Sign in there with the same username and password you used when registering your society (username: {loginId}).\n\n" +
+            "To use the mobile app, register yourself as a resident from the app's \"Create account\" screen.\n\n" +
+            "Welcome aboard.",
+            NotificationCategories.Account,
+            NotificationCategoryKind.Mandatory,
+            NotificationChannel.Email | NotificationChannel.Push);
+
         // Resident self-onboarding â€” notify the community admins a request needs review.
         yield return Platform(
             NotificationTemplateKeys.JoinRequestSubmitted,

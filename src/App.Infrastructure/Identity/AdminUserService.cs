@@ -1,19 +1,28 @@
 using App.Application.Auth;
+using App.Application.Config;
 using App.Application.Exceptions;
 using App.Application.Identity;
+using App.Application.Notifications;
 using App.Application.Querying;
 using App.Contracts.Envelope;
 using App.Domain.Identity;
 using App.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace App.Infrastructure.Identity;
 
 public sealed class AdminUserService(
     AppDbContext db,
     IPasswordHasher passwordHasher,
-    IPageSizePolicy pageSizePolicy) : IAdminUserService
+    IPageSizePolicy pageSizePolicy,
+    INotificationService notifications,
+    IConfigService config,
+    ILogger<AdminUserService> logger) : IAdminUserService
 {
+    private const string PortalUrlKey = "admin.portalUrl";
+    private const string DefaultPortalUrl = "http://localhost:5173";
+
     public async Task<PagedData<AdminUserDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
@@ -155,6 +164,7 @@ public sealed class AdminUserService(
 
         var communityIds = await ResolveScopeCommunityIdsAsync(roleName, request.OrganizationId, request.CommunityId, cancellationToken);
 
+        var previousStatus = user.Status;
         user.Name = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim();
         user.Status = status;
         if (!string.IsNullOrEmpty(request.Password))
@@ -199,11 +209,55 @@ public sealed class AdminUserService(
             () => db.SaveChangesAsync(cancellationToken),
             "That role scope is already assigned.");
 
+        // Approval email: a PowerUser flipping a society admin from Suspended to Active IS the
+        // approval gate. Send it after the commit, non-blocking and failure-tolerant — a mail hiccup
+        // must never roll back the activation (steering: fail safe, not fatal).
+        if (previousStatus == UserStatus.Suspended && status == UserStatus.Active)
+        {
+            await SendActivationNotificationAsync(user, communityIds, cancellationToken);
+        }
+
         var assignments = communityIds.Count == 0
             ? new List<AdminUserRoleScopeDto> { new(role.Id, role.Name, null) }
             : communityIds.Distinct().Select(cid => new AdminUserRoleScopeDto(role.Id, role.Name, cid)).ToList();
 
         return new AdminUserDto(user.Id, user.Name, user.Email, user.Phone, user.Status.ToString(), [role.Name], assignments);
+    }
+
+    private async Task SendActivationNotificationAsync(User user, List<Guid> communityIds, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var scopeCommunityId = communityIds.Count > 0 ? communityIds[0] : (Guid?)null;
+            if (scopeCommunityId is not { } communityId)
+            {
+                return; // platform admin (no community) — no society activation email applies.
+            }
+
+            var societyName = await db.Communities.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.Id == communityId).Select(c => c.Name).FirstOrDefaultAsync(cancellationToken);
+            var portalUrl = (await config.GetStringAsync(PortalUrlKey, DefaultPortalUrl, communityId, cancellationToken)).TrimEnd('/');
+
+            var placeholders = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["name"] = string.IsNullOrWhiteSpace(user.Name) ? "there" : user.Name!,
+                ["societyName"] = string.IsNullOrWhiteSpace(societyName) ? "your society" : societyName!,
+                ["portalUrl"] = portalUrl,
+                ["loginId"] = user.Email ?? user.Phone ?? "the email/phone you registered with",
+            };
+
+            // Editable, templated notification (admin.society.activated) — subject/body + placeholders
+            // live as data, rendered + wrapped in the shared email layout. EnqueueAsync is Add-only
+            // (transactional outbox); the activation already committed, so flush the queued rows here.
+            await notifications.EnqueueAsync(
+                new NotificationRequest(NotificationTemplateKeys.SocietyActivated, user.Id, communityId, placeholders),
+                cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to queue activation notification for admin user {UserId}", user.Id);
+        }
     }
 
     public async Task DeleteAsync(Guid userId, CancellationToken cancellationToken = default)

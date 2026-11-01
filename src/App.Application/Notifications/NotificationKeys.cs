@@ -19,6 +19,13 @@ public static class NotificationTemplateKeys
     /// <summary>Resident account/registration approved (Req 11.2).</summary>
     public const string ResidentApprovalApproved = "resident.approval.approved";
 
+    /// <summary>
+    /// A registered society's admin was activated (Suspended → Active) by a PowerUser. Sent to the
+    /// admin. Account category (mandatory); targets Email + Push. Fills {name}, {societyName},
+    /// {portalUrl}, {loginId}.
+    /// </summary>
+    public const string SocietyActivated = "admin.society.activated";
+
     /// <summary>A new resident join request was submitted → notify community admins. Fills {name}, {unitNumber}.</summary>
     public const string JoinRequestSubmitted = "joinrequest.submitted";
 
