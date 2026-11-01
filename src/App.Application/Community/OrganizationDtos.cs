@@ -4,7 +4,7 @@ namespace App.Application.Community;
 /// <param name="Id">The organization id.</param>
 /// <param name="Name">Organization name.</param>
 /// <param name="IsArchived">Whether the organization is soft-deleted (Req 12.5 parity).</param>
-public sealed record OrganizationDto(Guid Id, string Name, bool IsArchived);
+public sealed record OrganizationDto(Guid Id, string Name, bool IsArchived, bool HasActiveAdmin = false);
 
 /// <summary>Create an organization (Req 12.1).</summary>
 /// <param name="Name">Organization name. Required.</param>

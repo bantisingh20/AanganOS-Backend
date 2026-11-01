@@ -18,7 +18,7 @@ public interface IResidentService
     Task<ResidentDto?> GetAsync(Guid residentId, bool includeArchived = false, CancellationToken cancellationToken = default);
 
    
-    Task<PagedData<ResidentDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default);
+    Task<PagedData<ResidentDto>> ListAsync(ListQueryParameters parameters, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
     
     Task<HouseholdMemberDto> AssociateHouseholdAsync(Guid residentId, AssociateHouseholdRequest request, CancellationToken cancellationToken = default);

@@ -155,11 +155,17 @@ public sealed class ResidentService(
         return resident is null ? null : ToDto(resident);
     }
 
-    public async Task<PagedData<ResidentDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<ResidentDto>> ListAsync(ListQueryParameters parameters, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        var paged = await db.Residents.AsNoTracking().ToPagedResultAsync(
+        var source = db.Residents.AsNoTracking();
+        if (organizationId is { } orgId)
+        {
+            source = source.Where(r => db.Communities.Any(c => c.Id == r.CommunityId && c.OrganizationId == orgId));
+        }
+
+        var paged = await source.ToPagedResultAsync(
             parameters, QueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
 
         var userIds = paged.Items

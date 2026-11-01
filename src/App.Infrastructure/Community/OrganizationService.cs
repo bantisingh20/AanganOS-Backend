@@ -93,13 +93,40 @@ public sealed class OrganizationService(
         return org is null ? null : ToDto(org);
     }
 
-    public Task<PagedData<OrganizationDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<OrganizationDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
         // The global soft-delete filter excludes archived organizations from ordinary lists.
-        return db.Organizations.AsNoTracking().ToPagedResultAsync(
+        var paged = await db.Organizations.AsNoTracking().ToPagedResultAsync(
             parameters, QueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+
+        var orgIds = paged.Items.Select(o => o.Id).ToList();
+        if (orgIds.Count == 0)
+        {
+            return paged;
+        }
+
+        // An org is "active" once at least one Active admin login is scoped to one of its
+        // communities (the approval gate flips a registered org's admin from Suspended to Active).
+        var activeOrgIds = await (
+            from c in db.Communities.AsNoTracking().IgnoreQueryFilters()
+            where orgIds.Contains(c.OrganizationId)
+            join ur in db.UserRoles.AsNoTracking().IgnoreQueryFilters() on c.Id equals ur.CommunityId
+            where !ur.IsDeleted
+            join u in db.Users.AsNoTracking().IgnoreQueryFilters() on ur.UserId equals u.Id
+            where !u.IsDeleted && u.Status == App.Domain.Identity.UserStatus.Active
+            select c.OrganizationId).Distinct().ToListAsync(cancellationToken);
+
+        var activeSet = activeOrgIds.ToHashSet();
+
+        return new PagedData<OrganizationDto>
+        {
+            Items = paged.Items.Select(o => o with { HasActiveAdmin = activeSet.Contains(o.Id) }).ToList(),
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            TotalCount = paged.TotalCount,
+        };
     }
 
     private static OrganizationDto ToDto(Organization o) => new(o.Id, o.Name, o.IsDeleted);

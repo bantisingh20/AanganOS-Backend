@@ -44,6 +44,7 @@ public static class ResidentEndpoints
                 string? verificationStatus,
                 string? residentType,
                 Guid? communityId,
+                Guid? organizationId,
                 int? page,
                 int? pageSize,
                 IResidentService residents,
@@ -72,7 +73,7 @@ public static class ResidentEndpoints
                     Sort = EndpointSort.Parse(sort),
                 };
 
-                var data = await residents.ListAsync(parameters, ct);
+                var data = await residents.ListAsync(parameters, organizationId, ct);
                 return Results.Ok(ApiResult<PagedData<ResidentDto>>.Ok(data, string.Empty));
             })
             .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Resident"));
