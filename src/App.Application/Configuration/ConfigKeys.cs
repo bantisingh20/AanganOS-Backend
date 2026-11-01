@@ -672,4 +672,6 @@ public static class MasterDataKeys
     public const string MaintenancePaymentMethod = "Maintenance_Payment_Method";
 
     public const string MaintenancePaymentStatus = "Maintenance_Payment_Status";
+
+    public const string MaintenanceExpenseCategory = "Maintenance_Expense_Category";
 }

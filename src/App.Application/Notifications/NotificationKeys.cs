@@ -204,6 +204,14 @@ public static class NotificationTemplateKeys
     /// push channel. Fills {eventTitle}, {startsAt}.
     /// </summary>
     public const string ResidentEventRegistered = "event.registered";
+
+    public const string MaintenancePaymentSubmitted = "maintenance.payment.submitted";
+
+    public const string MaintenancePaymentApproved = "maintenance.payment.approved";
+
+    public const string MaintenancePaymentRejected = "maintenance.payment.rejected";
+
+    public const string MaintenanceBillGenerated = "maintenance.bill.generated";
 }
 
 /// <summary>

@@ -6,7 +6,48 @@ public sealed record MaintenanceChargeDto(
     Guid UnitId,
     decimal Amount,
     string Label,
-    bool IsActive);
+    bool IsActive,
+    string? UnitNumber = null);
+
+public sealed record MaintenanceDefaulterDto(
+    Guid UnitId,
+    string UnitNumber,
+    string ResidentName,
+    int UnpaidCount);
+
+public sealed record MaintenanceCollectionSummaryDto(
+    decimal TotalCollected,
+    decimal TotalOutstanding,
+    int PaidBillCount,
+    int UnpaidBillCount,
+    IReadOnlyList<MaintenanceCollectionByCommunityDto> ByCommunity);
+
+public sealed record MaintenanceCollectionByCommunityDto(
+    Guid CommunityId,
+    string CommunityName,
+    string OrganizationName,
+    decimal Collected,
+    decimal Outstanding,
+    decimal Spent = 0m);
+
+public sealed record MaintenanceExpenseDto(
+    Guid Id,
+    Guid CommunityId,
+    string Category,
+    string Title,
+    decimal Amount,
+    DateTime SpentOnUtc,
+    string Vendor,
+    string Notes);
+
+public sealed record SaveMaintenanceExpenseRequest(
+    Guid CommunityId,
+    string Category,
+    string Title,
+    decimal Amount,
+    DateTime SpentOnUtc,
+    string? Vendor,
+    string? Notes);
 
 public sealed record SetMaintenanceChargeRequest(
     Guid CommunityId,
@@ -41,6 +82,8 @@ public sealed record MaintenanceBillDto(
     string Status,
     DateTime? DueDateUtc,
     DateTime IssuedAtUtc,
+    bool PendingApproval = false,
+    string? UnitNumber = null,
     string? CommunityName = null,
     string? OrganizationName = null);
 

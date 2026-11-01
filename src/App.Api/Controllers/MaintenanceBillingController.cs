@@ -44,6 +44,15 @@ public sealed class MaintenanceBillingController(IMaintenanceBillingService svc)
         return Ok(ApiResult<IReadOnlyList<MaintenanceChargeDto>>.Ok(items, string.Empty));
     }
 
+    [HttpDelete("api/v1/maintenance-charges/{id:guid}")]
+    [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
+    [RequirePermission(PermissionAction.Edit, "MaintenanceCharge")]
+    public async Task<IActionResult> DeactivateCharge(Guid id, CancellationToken ct)
+    {
+        var dto = await svc.DeactivateChargeAsync(id, ct);
+        return Ok(ApiResult<MaintenanceChargeDto>.Ok(dto, string.Empty));
+    }
+
     // --- Bills ---
     [HttpPost("api/v1/maintenance-bills/generate")]
     [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
@@ -77,6 +86,76 @@ public sealed class MaintenanceBillingController(IMaintenanceBillingService svc)
 
         var data = await svc.ListBillsAsync(BuildParameters(page, pageSize, sort, filters), ct);
         return Ok(ApiResult<PagedData<MaintenanceBillDto>>.Ok(data, string.Empty));
+    }
+
+    [HttpGet("api/v1/maintenance-bills/me")]
+    [RequirePermission(PermissionAction.View, "MaintenanceBill")]
+    public async Task<IActionResult> MyBills(
+        [FromQuery] string? sort,
+        [FromQuery] string? status,
+        [FromQuery] int? page,
+        [FromQuery] int? pageSize,
+        CancellationToken ct)
+    {
+        var filters = new List<FilterTerm>();
+        AddEquals(filters, "status", status);
+
+        var data = await svc.ListMyBillsAsync(BuildParameters(page, pageSize, sort, filters), ct);
+        return Ok(ApiResult<PagedData<MaintenanceBillDto>>.Ok(data, string.Empty));
+    }
+
+    [HttpGet("api/v1/maintenance-bills/defaulters")]
+    [RequirePermission(PermissionAction.View, "MaintenanceBill")]
+    public async Task<IActionResult> Defaulters(CancellationToken ct)
+    {
+        var items = await svc.ListDefaultersAsync(ct);
+        return Ok(ApiResult<IReadOnlyList<MaintenanceDefaulterDto>>.Ok(items, string.Empty));
+    }
+
+    [HttpGet("api/v1/maintenance-bills/collection-summary")]
+    [RequirePermission(PermissionAction.View, "MaintenanceBill")]
+    public async Task<IActionResult> CollectionSummary([FromQuery] Guid? communityId, CancellationToken ct)
+    {
+        var dto = await svc.GetCollectionSummaryAsync(communityId, ct);
+        return Ok(ApiResult<MaintenanceCollectionSummaryDto>.Ok(dto, string.Empty));
+    }
+
+    // --- Expenses ---
+    [HttpGet("api/v1/maintenance-expenses")]
+    [RequirePermission(PermissionAction.View, "MaintenanceBill")]
+    public async Task<IActionResult> ListExpenses([FromQuery] Guid communityId, CancellationToken ct)
+    {
+        var items = await svc.ListExpensesAsync(communityId, ct);
+        return Ok(ApiResult<IReadOnlyList<MaintenanceExpenseDto>>.Ok(items, string.Empty));
+    }
+
+    [HttpPost("api/v1/maintenance-expenses")]
+    [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
+    [RequirePermission(PermissionAction.Create, "MaintenanceBill")]
+    public async Task<IActionResult> CreateExpense([FromBody] SaveExpenseBody body, CancellationToken ct)
+    {
+        var dto = await svc.CreateExpenseAsync(new SaveMaintenanceExpenseRequest(
+            body.CommunityId, body.Category!, body.Title!, body.Amount, body.SpentOnUtc, body.Vendor, body.Notes), ct);
+        return Ok(ApiResult<MaintenanceExpenseDto>.Ok(dto, string.Empty));
+    }
+
+    [HttpPut("api/v1/maintenance-expenses/{id:guid}")]
+    [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
+    [RequirePermission(PermissionAction.Edit, "MaintenanceBill")]
+    public async Task<IActionResult> UpdateExpense(Guid id, [FromBody] SaveExpenseBody body, CancellationToken ct)
+    {
+        var dto = await svc.UpdateExpenseAsync(id, new SaveMaintenanceExpenseRequest(
+            body.CommunityId, body.Category!, body.Title!, body.Amount, body.SpentOnUtc, body.Vendor, body.Notes), ct);
+        return Ok(ApiResult<MaintenanceExpenseDto>.Ok(dto, string.Empty));
+    }
+
+    [HttpDelete("api/v1/maintenance-expenses/{id:guid}")]
+    [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
+    [RequirePermission(PermissionAction.Edit, "MaintenanceBill")]
+    public async Task<IActionResult> DeleteExpense(Guid id, CancellationToken ct)
+    {
+        await svc.DeleteExpenseAsync(id, ct);
+        return Ok(ApiResult<DeletedResponse>.Ok(new DeletedResponse(id), string.Empty));
     }
 
     [HttpGet("api/v1/maintenance-bills/me/due")]
@@ -220,6 +299,17 @@ public sealed class MaintenanceBillingController(IMaintenanceBillingService svc)
         [Range(2000, 3000)] public int PeriodYear { get; init; }
         [Range(1, 12)] public int PeriodMonth { get; init; }
         public DateTime? DueDateUtc { get; init; }
+    }
+
+    public sealed class SaveExpenseBody
+    {
+        [Required] public Guid CommunityId { get; init; }
+        [Required(AllowEmptyStrings = false)] [MaxLength(60)] public string? Category { get; init; }
+        [Required(AllowEmptyStrings = false)] [MaxLength(200)] public string? Title { get; init; }
+        [Range(0.01, 999999999)] public decimal Amount { get; init; }
+        [Required] public DateTime SpentOnUtc { get; init; }
+        [MaxLength(200)] public string? Vendor { get; init; }
+        [MaxLength(1000)] public string? Notes { get; init; }
     }
 
     public sealed class RecordPaymentBody

@@ -139,6 +139,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Domain.MaintenanceBilling.MaintenanceCharge> MaintenanceCharges => Set<Domain.MaintenanceBilling.MaintenanceCharge>();
     public DbSet<Domain.MaintenanceBilling.MaintenanceBill> MaintenanceBills => Set<Domain.MaintenanceBilling.MaintenanceBill>();
     public DbSet<Domain.MaintenanceBilling.MaintenancePayment> MaintenancePayments => Set<Domain.MaintenanceBilling.MaintenancePayment>();
+    public DbSet<Domain.MaintenanceBilling.MaintenanceExpense> MaintenanceExpenses => Set<Domain.MaintenanceBilling.MaintenanceExpense>();
 
     private bool IsSuperAdmin => _tenant.IsPlatformSuperAdmin;
     private bool IsResidentSelfScoped => _tenant.IsResidentSelfScoped;

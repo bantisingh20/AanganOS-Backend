@@ -839,6 +839,20 @@ public sealed class MasterDataItemEntityConfiguration : IEntityTypeConfiguration
             ("rejected", "Rejected"),
         };
 
+        var maintenanceExpenseCategories = new (string Code, string Label)[]
+        {
+            ("festival", "Festival & Decoration"),
+            ("gardening", "Gardening & Landscaping"),
+            ("painting", "Painting & Renovation"),
+            ("repairs", "Repairs & Maintenance"),
+            ("security", "Security"),
+            ("cleaning", "Cleaning & Housekeeping"),
+            ("electrical", "Electrical"),
+            ("plumbing", "Plumbing"),
+            ("water", "Water & Tanker"),
+            ("other", "Other"),
+        };
+
         // Ticket_Assignment_Rule (Task 20.2, Req 33.1): NO platform defaults â€” assignment rules name a
         // community's OWN staff users (each code is a `category->userId` pair), so they are inherently
         // per-community data a community adds via Config_Service, not a platform seed. Declared here as
@@ -1216,6 +1230,12 @@ public sealed class MasterDataItemEntityConfiguration : IEntityTypeConfiguration
         foreach (var (code, label) in maintenancePaymentStatuses)
         {
             yield return Platform(MasterDataKeys.MaintenancePaymentStatus, code, label, order++);
+        }
+
+        order = 0;
+        foreach (var (code, label) in maintenanceExpenseCategories)
+        {
+            yield return Platform(MasterDataKeys.MaintenanceExpenseCategory, code, label, order++);
         }
     }
 
@@ -1595,6 +1615,38 @@ public sealed class NotificationTemplateEntityConfiguration : IEntityTypeConfigu
             NotificationCategories.Event,
             NotificationCategoryKind.Optional,
             NotificationChannel.Push);
+
+        yield return Platform(
+            NotificationTemplateKeys.MaintenancePaymentSubmitted,
+            "Maintenance payment awaiting approval",
+            "A resident submitted a payment of {amount} for unit {unitNumber} ({period}). Please review and approve or reject it.",
+            NotificationCategories.Invoice,
+            NotificationCategoryKind.Optional,
+            NotificationChannel.Push | NotificationChannel.Email);
+
+        yield return Platform(
+            NotificationTemplateKeys.MaintenancePaymentApproved,
+            "Payment approved",
+            "Your maintenance payment of {amount} for {period} has been approved. Thank you.",
+            NotificationCategories.Invoice,
+            NotificationCategoryKind.Optional,
+            NotificationChannel.Push | NotificationChannel.Email);
+
+        yield return Platform(
+            NotificationTemplateKeys.MaintenancePaymentRejected,
+            "Payment rejected",
+            "Your maintenance payment of {amount} for {period} could not be approved. {reason}",
+            NotificationCategories.Invoice,
+            NotificationCategoryKind.Optional,
+            NotificationChannel.Push | NotificationChannel.Email);
+
+        yield return Platform(
+            NotificationTemplateKeys.MaintenanceBillGenerated,
+            "New maintenance bill",
+            "A maintenance bill of {amount} for {period} has been raised for your unit. Please pay before the due date.",
+            NotificationCategories.Invoice,
+            NotificationCategoryKind.Optional,
+            NotificationChannel.Push | NotificationChannel.Email);
 
         yield return EmailLayoutTemplate();
     }

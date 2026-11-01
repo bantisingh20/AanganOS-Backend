@@ -45,9 +45,11 @@ public sealed class MyTasksService(
             }
 
             var dueCutoff = clock.UtcNow.AddDays(await ReminderDaysAsync(cancellationToken));
+            var pendingBillIds = await PendingPaymentBillIdsAsync(cancellationToken);
             var dues = await db.MaintenanceBills.AsNoTracking()
                 .CountAsync(b => (b.Status == DomainBillStatuses.Unpaid || b.Status == DomainBillStatuses.PartiallyPaid)
-                    && (b.DueDateUtc == null || b.DueDateUtc <= dueCutoff), cancellationToken);
+                    && (b.DueDateUtc == null || b.DueDateUtc <= dueCutoff)
+                    && !pendingBillIds.Contains(b.Id), cancellationToken);
             if (dues > 0)
             {
                 items.Add(new MyTaskSummaryItem(MyTaskTypes.MaintenanceDue, "Maintenance dues to pay", dues, "warning"));
@@ -154,9 +156,11 @@ public sealed class MyTasksService(
         if (isResident && want(MyTaskTypes.MaintenanceDue))
         {
             var dueCutoff = clock.UtcNow.AddDays(await ReminderDaysAsync(cancellationToken));
+            var pendingBillIds = await PendingPaymentBillIdsAsync(cancellationToken);
             var rows = await db.MaintenanceBills.AsNoTracking()
                 .Where(b => (b.Status == DomainBillStatuses.Unpaid || b.Status == DomainBillStatuses.PartiallyPaid)
-                    && (b.DueDateUtc == null || b.DueDateUtc <= dueCutoff))
+                    && (b.DueDateUtc == null || b.DueDateUtc <= dueCutoff)
+                    && !pendingBillIds.Contains(b.Id))
                 .OrderBy(b => b.DueDateUtc).Take(50)
                 .Select(b => new { b.Id, b.PeriodYear, b.PeriodMonth, b.Amount, b.AmountPaid, b.DueDateUtc, b.Status })
                 .ToListAsync(cancellationToken);
@@ -265,6 +269,15 @@ public sealed class MyTasksService(
     {
         var days = await config.GetIntAsync(ConfigKeys.MaintenanceBillReminderDaysBeforeDue, 10, null, cancellationToken);
         return days <= 0 ? 10 : days;
+    }
+
+    private async Task<List<Guid>> PendingPaymentBillIdsAsync(CancellationToken cancellationToken)
+    {
+        return await db.MaintenancePayments.AsNoTracking()
+            .Where(p => p.Status == DomainPaymentStatuses.PendingApproval)
+            .Select(p => p.MaintenanceBillId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
     }
 
     private async Task<int> MyKycPendingCountAsync(CancellationToken cancellationToken)

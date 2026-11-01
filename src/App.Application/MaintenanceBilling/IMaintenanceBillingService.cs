@@ -30,4 +30,20 @@ public interface IMaintenanceBillingService
     Task<MaintenanceBillDto> WaiveBillAsync(Guid billId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<MaintenanceBillDto>> ListMyDueBillsAsync(int reminderDaysBeforeDue, CancellationToken cancellationToken = default);
+
+    Task<PagedData<MaintenanceBillDto>> ListMyBillsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default);
+
+    Task<MaintenanceChargeDto> DeactivateChargeAsync(Guid chargeId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<MaintenanceDefaulterDto>> ListDefaultersAsync(CancellationToken cancellationToken = default);
+
+    Task<MaintenanceCollectionSummaryDto> GetCollectionSummaryAsync(Guid? communityId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<MaintenanceExpenseDto>> ListExpensesAsync(Guid communityId, CancellationToken cancellationToken = default);
+
+    Task<MaintenanceExpenseDto> CreateExpenseAsync(SaveMaintenanceExpenseRequest request, CancellationToken cancellationToken = default);
+
+    Task<MaintenanceExpenseDto> UpdateExpenseAsync(Guid expenseId, SaveMaintenanceExpenseRequest request, CancellationToken cancellationToken = default);
+
+    Task DeleteExpenseAsync(Guid expenseId, CancellationToken cancellationToken = default);
 }

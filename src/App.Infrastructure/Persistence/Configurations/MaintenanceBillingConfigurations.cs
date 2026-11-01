@@ -69,3 +69,21 @@ public sealed class MaintenancePaymentEntityConfiguration : IEntityTypeConfigura
             .HasDatabaseName("IX_MaintenancePayment_CommunityId_MaintenanceBillId");
     }
 }
+
+public sealed class MaintenanceExpenseEntityConfiguration : IEntityTypeConfiguration<MaintenanceExpense>
+{
+    public void Configure(EntityTypeBuilder<MaintenanceExpense> builder)
+    {
+        builder.ToTable("MaintenanceExpenses");
+        builder.HasKey(e => e.Id);
+
+        builder.Property(e => e.Category).IsRequired().HasMaxLength(60);
+        builder.Property(e => e.Title).IsRequired().HasMaxLength(200);
+        builder.Property(e => e.Amount).HasPrecision(18, 2);
+        builder.Property(e => e.Vendor).IsRequired().HasMaxLength(200).HasDefaultValue(string.Empty);
+        builder.Property(e => e.Notes).IsRequired().HasMaxLength(1000).HasDefaultValue(string.Empty);
+
+        builder.HasIndex(e => new { e.CommunityId, e.SpentOnUtc })
+            .HasDatabaseName("IX_MaintenanceExpense_CommunityId_SpentOnUtc");
+    }
+}
