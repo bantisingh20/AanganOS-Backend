@@ -197,6 +197,7 @@ public static class DependencyInjection
         services.AddScoped<IIdempotencyService, IdempotencyService>();
 
         services.AddSingleton<IPasswordHasher, PasswordHasherAdapter>();
+        services.AddSingleton<App.Application.Auth.IOtpGenerator, Auth.OtpGenerator>();
         services.AddSingleton<IAuthTokenIssuer, JwtAuthTokenIssuer>();
         services.AddScoped<ISessionRevocationStore, SessionRevocationStore>();
         services.TryAddScoped<IOtpDeliverer, LoggingOtpDeliverer>(); // Notification_Service (Task 7.1) replaces later.

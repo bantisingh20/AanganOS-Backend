@@ -28,6 +28,7 @@ public sealed class GateService(
     IConfigService config,
     IClock clock,
     IPasswordHasher hasher,
+    IOtpGenerator otpGenerator,
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
     IMessageSender messages,
@@ -145,7 +146,6 @@ public sealed class GateService(
             }
         }
 
-        // Short OTP shared with the visitor; only its salted hash is stored (steering: secrets).
         var otp = GenerateOtp();
 
         var pass = new VisitPass
@@ -1631,9 +1631,7 @@ public sealed class GateService(
         }
     }
 
-    private static string GenerateOtp() =>
-        // 6-digit numeric OTP (000000–999999), unbiased.
-        RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+    private string GenerateOtp() => otpGenerator.Generate(6).Code;
 
     private static string RequireText(string? value, string field, string message)
     {

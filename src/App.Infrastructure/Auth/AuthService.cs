@@ -22,6 +22,7 @@ public sealed class AuthService(
     IPasswordHasher passwordHasher,
     IAuthTokenIssuer tokenIssuer,
     IOtpDeliverer otpDeliverer,
+    IOtpGenerator otpGenerator,
     IAuditService audit,
     IConfigService config,
     INotificationService notifications,
@@ -245,13 +246,7 @@ public sealed class AuthService(
         Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             .Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
-    private static string GenerateNumericCode(int length)
-    {
-        var digits = length > 0 ? length : 6;
-        var max = (int)Math.Pow(10, digits);
-        var value = RandomNumberGenerator.GetInt32(0, max);
-        return value.ToString(CultureInfo.InvariantCulture).PadLeft(digits, '0');
-    }
+
 
 
     private async Task EnforceSingleActiveSessionAsync(
@@ -410,22 +405,20 @@ public sealed class AuthService(
         var expiryMinutes = await config.GetIntAsync(
             AuthConfigKeys.OtpExpiryMinutes, _auth.OtpExpiryMinutes, cancellationToken: cancellationToken);
 
-        var devFixed = _auth.DevFixedOtp?.Trim();
-        var useDevOtp = !string.IsNullOrEmpty(devFixed);
-        var code = useDevOtp ? devFixed! : GenerateNumericCode(_auth.OtpLength);
+        var otp = otpGenerator.Generate(_auth.OtpLength);
 
         db.OtpTokens.Add(new OtpToken
         {
             UserId = user.Id,
             PurposeType = OtpPurpose.PasswordReset,
-            HashedCode = passwordHasher.Hash(code),
+            HashedCode = passwordHasher.Hash(otp.Code),
             ExpiresAtUtc = clock.UtcNow.AddMinutes(expiryMinutes),
         });
         await db.SaveChangesAsync(cancellationToken);
 
-        if (!useDevOtp)
+        if (!otp.IsDefault)
         {
-            await otpDeliverer.DeliverAsync(identifier, code, cancellationToken);
+            await otpDeliverer.DeliverAsync(identifier, otp.Code, cancellationToken);
         }
     }
 

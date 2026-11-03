@@ -25,34 +25,7 @@ using DomainParcelVerificationMethods = App.Domain.Parcel.ParcelVerificationMeth
 
 namespace App.Infrastructure.Parcel;
 
-/// <summary>
-/// EF-backed <see cref="IParcelService"/> (Task 18.1, Req 28.1–28.4, 29.3): parcel registration and
-/// the configurable status state machine. Custody-location assignment (18.2), handover (18.3), the
-/// append-only timeline + SLA/lost/damaged/returned flows (18.4) and the HTTP controllers (18.5)
-/// extend this same seam in later tasks.
-///
-/// <para><b>Registration (Req 28.1, 28.4, 29.3).</b> A guard with <c>Create</c> on <c>Parcel</c>
-/// registers a received parcel for a recipient unit in their community: the recipient unit is
-/// resolved tenant-scoped (so a cross-tenant/non-own unit is a validation error, same-community by
-/// construction), the category + condition are validated against the editable <c>Parcel_Category</c>
-/// / <c>Parcel_Condition</c> lists, the received timestamp is stamped from the clock, the status
-/// starts <c>received</c>, the optional photo/condition-evidence File_Service references are recorded
-/// (Req 28.4), and the parcel is flagged priority when its category is one of the configurable
-/// priority categories (<c>parcel.priorityCategories</c>, Req 29.3). Audited.</para>
-///
-/// <para><b>Status state machine (Req 28.2, 28.3).</b> A status change is permitted only when the
-/// <c>from-&gt;to</c> pair is present in the editable <c>Parcel_Status_Transition</c> allow-list for
-/// the community — an illegal transition (including a no-op <c>from==to</c>) is rejected with a
-/// VALIDATION_ERROR and nothing is mutated (Req 28.3), with no hardcoded transition table. The parcel
-/// is loaded TRACKED so EF carries the <c>RowVersion</c> into the UPDATE: two concurrent transitions
-/// race on the row-version check and exactly one wins (the loser → CONFLICT via the central mapping
-/// in <see cref="AppDbContext.SaveChangesAsync"/>). Audited.</para>
-///
-/// <para><b>Tenant + self scope.</b> <c>Parcel</c> is <c>IUnitScoped</c>, so the DbContext resident
-/// self-scope filter restricts a resident principal to parcels addressed to their own unit — no
-/// bespoke predicate here. Reads use <c>AsNoTracking</c>; mutations are audited and committed under
-/// the parcel RowVersion.</para>
-/// </summary>
+
 public sealed class ParcelService(
     AppDbContext db,
     IAuditService audit,
@@ -61,6 +34,7 @@ public sealed class ParcelService(
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
     IPasswordHasher hasher,
+    IOtpGenerator otpGenerator,
     IIdempotencyService idempotency,
     ISecurityOpsService securityOps,
     ITenantContext tenant,
@@ -68,10 +42,6 @@ public sealed class ParcelService(
     IAsyncQueryExecutor executor)
     : IParcelService
 {
-    // Allow-list for the Task 18.5 parcel list endpoint (Req 28.5). Only these fields reach the query
-    // — no arbitrary client LINQ (steering: no hardcoding, injection-safe). Sorts/filters ride the
-    // parcel's indexed columns (status / category / recipient unit / received timestamp); default is
-    // newest-received-first. Mirrors the Gate/Resident list configs.
     private static readonly ListQueryConfiguration<DomainParcel> ParcelQueryConfig =
         new ListQueryConfiguration<DomainParcel>()
             .WithDefaultSort(p => p.ReceivedAtUtc, SortDirection.Descending)
@@ -91,14 +61,8 @@ public sealed class ParcelService(
     private const string DuplicateCustodyLocationCodeMessage =
         "A custody location with the same code already exists in this community.";
 
-    // A given active custody location holds at most one parcel (Req 29.4). The filtered unique index
-    // UX_Parcel_CustodyLocationId_Active decides the winner under concurrency; the race loser's
-    // unique-violation surfaces here as a CONFLICT.
     private const string CustodyLocationInUseMessage =
         "That custody location is already holding another parcel. Choose a different location.";
-    // Default priority categories (Req 29.3) when parcel.priorityCategories is unset in Config_Service
-    // — a safe fallback, not a hardcoded decision: a community can override the key to tune which
-    // categories are urgent without a code change (steering: no hardcoding).
     private const string DefaultPriorityCategories = "medicine,perishable,urgent";
 
     // Handover verification config fallbacks (Req 30.1, 30.2). Safe defaults when the Config_Service
@@ -409,7 +373,7 @@ public sealed class ParcelService(
 
         var validityHours = await config.GetIntAsync(
             ConfigKeys.ParcelHandoverAuthorizationValidityHours, DefaultAuthorizationValidityHours, parcel.CommunityId, cancellationToken);
-        var otp = GenerateOtp(await config.GetIntAsync(ConfigKeys.ParcelHandoverOtpLength, DefaultOtpLength, parcel.CommunityId, cancellationToken));
+        var otp = otpGenerator.Generate(await config.GetIntAsync(ConfigKeys.ParcelHandoverOtpLength, DefaultOtpLength, parcel.CommunityId, cancellationToken)).Code;
 
         var authorization = new DomainParcelAuthorization
         {
@@ -987,14 +951,7 @@ public sealed class ParcelService(
         CryptographicOperations.FixedTimeEquals(
             System.Text.Encoding.UTF8.GetBytes(a), System.Text.Encoding.UTF8.GetBytes(b));
 
-    /// <summary>Generate a short numeric OTP of the configured length (Req 30.2), min 4 digits.</summary>
-    private static string GenerateOtp(int length)
-    {
-        var digits = Math.Clamp(length, 4, 10);
-        var max = (int)Math.Pow(10, digits);
-        var value = RandomNumberGenerator.GetInt32(0, max);
-        return value.ToString().PadLeft(digits, '0');
-    }
+
 
     /// <summary>Opaque, high-entropy, URL-safe token for the QR code (Req 30.2), not derived from data.</summary>
     private static string GenerateOpaqueToken() =>

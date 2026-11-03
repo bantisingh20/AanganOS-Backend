@@ -18,6 +18,7 @@ namespace App.Infrastructure.Onboarding;
 
 public sealed class ResidentOnboardingService(
     IPasswordHasher passwordHasher,
+    IOtpGenerator otpGenerator,
     AppDbContext db,
     ITenantContext tenantContext,
     IAuthorizationGuard authorizationGuard,
@@ -159,15 +160,13 @@ public sealed class ResidentOnboardingService(
         var expiryMinutes = await config.GetIntAsync(
             AuthConfigKeys.OtpExpiryMinutes, _auth.OtpExpiryMinutes, cancellationToken: cancellationToken);
 
-        var devFixed = _auth.DevFixedOtp?.Trim();
-        var useDevOtp = !string.IsNullOrEmpty(devFixed);
-        var code = useDevOtp ? devFixed! : GenerateNumericCode(_auth.OtpLength);
+        var otp = otpGenerator.Generate(_auth.OtpLength);
 
         db.OtpTokens.Add(new OtpToken
         {
             Phone = number,
             PurposeType = OtpPurpose.Registration,
-            HashedCode = passwordHasher.Hash(code),
+            HashedCode = passwordHasher.Hash(otp.Code),
             ExpiresAtUtc = clock.UtcNow.AddMinutes(expiryMinutes),
         });
         await db.SaveChangesAsync(cancellationToken);
@@ -203,16 +202,6 @@ public sealed class ResidentOnboardingService(
         var match = candidates.FirstOrDefault(o => passwordHasher.Verify(o.HashedCode, value))
             ?? throw new ValidationException("code", "The verification code is invalid or has expired.");
         match.UsedAtUtc = now;
-    }
-
-    private static string GenerateNumericCode(int length)
-    {
-        var digits = new char[length];
-        for (var i = 0; i < length; i++)
-        {
-            digits[i] = (char)('0' + RandomNumberGenerator.GetInt32(0, 10));
-        }
-        return new string(digits);
     }
 
     public async Task<SelfRegisterResult> SelfRegisterAsync(SelfRegisterRequest request, CancellationToken cancellationToken = default)
