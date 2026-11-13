@@ -1,0 +1,327 @@
+using App.Application.Auth;
+using App.Application.Config;
+using App.Application.Exceptions;
+using App.Application.Identity;
+using App.Application.Notifications;
+using App.Application.Querying;
+using App.Contracts.Envelope;
+using App.Domain.Identity;
+using App.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+
+namespace App.Infrastructure.Identity;
+
+public sealed class AdminUserService(
+    AppDbContext db,
+    IPasswordHasher passwordHasher,
+    IPageSizePolicy pageSizePolicy,
+    INotificationService notifications,
+    IConfigService config,
+    ILogger<AdminUserService> logger) : IAdminUserService
+{
+    private const string PortalUrlKey = "admin.portalUrl";
+    private const string DefaultPortalUrl = "http://localhost:5173";
+
+    public async Task<PagedData<AdminUserDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        var adminUserIds = await (
+            from ur in db.UserRoles.AsNoTracking()
+            join r in db.Roles.AsNoTracking() on ur.RoleId equals r.Id
+            where r.Surface == RoleSurface.Admin || r.Surface == RoleSurface.Both
+            select ur.UserId).Distinct().ToListAsync(cancellationToken);
+
+        var search = parameters.Search?.Trim();
+
+        var usersQuery = db.Users.AsNoTracking().Where(u => adminUserIds.Contains(u.Id));
+        if (!string.IsNullOrEmpty(search))
+        {
+            usersQuery = usersQuery.Where(u =>
+                (u.Email != null && u.Email.Contains(search)) ||
+                (u.Phone != null && u.Phone.Contains(search)));
+        }
+
+        var total = await usersQuery.CountAsync(cancellationToken);
+
+        var page = parameters.Page is > 0 ? parameters.Page!.Value : 1;
+        var pageSize = Math.Min(parameters.PageSize is > 0 ? parameters.PageSize!.Value : pageSizePolicy.DefaultPageSize, pageSizePolicy.MaxPageSize);
+
+        var users = await usersQuery
+            .OrderBy(u => u.Email ?? u.Phone)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        var pageUserIds = users.Select(u => u.Id).ToList();
+
+        var assignments = await (
+            from ur in db.UserRoles.AsNoTracking()
+            where pageUserIds.Contains(ur.UserId)
+            join r in db.Roles.AsNoTracking() on ur.RoleId equals r.Id
+            select new { ur.UserId, ur.RoleId, r.Name, ur.CommunityId }).ToListAsync(cancellationToken);
+
+        var items = users.Select(u =>
+        {
+            var mine = assignments.Where(a => a.UserId == u.Id).ToList();
+            return new AdminUserDto(
+                u.Id,
+                u.Name,
+                u.Email,
+                u.Phone,
+                u.Status.ToString(),
+                mine.Select(a => a.Name).Distinct().ToList(),
+                mine.Select(a => new AdminUserRoleScopeDto(a.RoleId, a.Name, a.CommunityId)).ToList());
+        }).ToList();
+
+        return new PagedData<AdminUserDto>
+        {
+            Items = items,
+            Page = page,
+            PageSize = pageSize,
+            TotalCount = total,
+        };
+    }
+
+    public async Task<AdminUserDto> CreateAsync(CreateAdminUserRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var identifier = request.Identifier?.Trim() ?? string.Empty;
+        if (identifier.Length == 0)
+        {
+            throw new ValidationException("identifier", "An email or phone is required.");
+        }
+        if (string.IsNullOrEmpty(request.Password))
+        {
+            throw new ValidationException("password", "A password is required.");
+        }
+
+        var roleName = request.RoleName?.Trim() ?? string.Empty;
+        var role = await db.Roles.FirstOrDefaultAsync(r => r.Name == roleName, cancellationToken)
+            ?? throw new ValidationException("roleName", "Unknown role.");
+        if (role.Surface != RoleSurface.Admin && role.Surface != RoleSurface.Both)
+        {
+            throw new ValidationException("roleName", "Only admin roles can be assigned here.");
+        }
+
+        var communityIds = await ResolveScopeCommunityIdsAsync(roleName, request.OrganizationId, request.CommunityId, cancellationToken);
+
+        var isEmail = identifier.Contains('@', StringComparison.Ordinal);
+        var user = new User
+        {
+            Name = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim(),
+            Email = isEmail ? identifier : null,
+            Phone = isEmail ? null : identifier,
+            PasswordHash = passwordHasher.Hash(request.Password),
+            Status = UserStatus.Active,
+        };
+        db.Users.Add(user);
+
+        if (communityIds.Count == 0)
+        {
+            db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id, CommunityId = null });
+        }
+        else
+        {
+            foreach (var cid in communityIds.Distinct())
+            {
+                db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id, CommunityId = cid });
+            }
+        }
+
+        // A community/organization admin is also a person in the society: create a Resident row
+        // (linked to this user) in each scoped community so they appear with units and residents.me()
+        // resolves for them. Marked verified — an admin is pre-trusted, not subject to KYC approval.
+        // Platform admins (PowerUser, no community scope) get no resident row.
+        foreach (var cid in communityIds.Distinct())
+        {
+            db.Set<App.Domain.Residents.Resident>().Add(new App.Domain.Residents.Resident
+            {
+                CommunityId = cid,
+                UserId = user.Id,
+                Name = user.Name ?? identifier,
+                Email = user.Email,
+                Phone = user.Phone,
+                ResidentType = "owner",
+                VerificationStatus = App.Domain.Residents.ResidentVerificationStatuses.Verified,
+            });
+        }
+
+        await UniqueConstraintGuard.SaveTranslatingUniqueViolationAsync(
+            () => db.SaveChangesAsync(cancellationToken),
+            "That email or phone is already in use by another login.");
+
+        var assignments = communityIds.Count == 0
+            ? new List<AdminUserRoleScopeDto> { new(role.Id, role.Name, null) }
+            : communityIds.Distinct().Select(cid => new AdminUserRoleScopeDto(role.Id, role.Name, cid)).ToList();
+
+        return new AdminUserDto(user.Id, user.Name, user.Email, user.Phone, user.Status.ToString(), [role.Name], assignments);
+    }
+
+    public async Task<AdminUserDto> UpdateAsync(Guid userId, UpdateAdminUserRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken)
+            ?? throw new NotFoundException("User not found.");
+
+        var roleName = request.RoleName?.Trim() ?? string.Empty;
+        var role = await db.Roles.FirstOrDefaultAsync(r => r.Name == roleName, cancellationToken)
+            ?? throw new ValidationException("roleName", "Unknown role.");
+        if (role.Surface != RoleSurface.Admin && role.Surface != RoleSurface.Both)
+        {
+            throw new ValidationException("roleName", "Only admin roles can be assigned here.");
+        }
+
+        if (!Enum.TryParse<UserStatus>(request.Status?.Trim(), ignoreCase: true, out var status))
+        {
+            throw new ValidationException("status", "Unknown status.");
+        }
+
+        var communityIds = await ResolveScopeCommunityIdsAsync(roleName, request.OrganizationId, request.CommunityId, cancellationToken);
+
+        var previousStatus = user.Status;
+        user.Name = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim();
+        user.Status = status;
+        if (!string.IsNullOrEmpty(request.Password))
+        {
+            user.PasswordHash = passwordHasher.Hash(request.Password);
+        }
+
+        var desiredScopes = communityIds.Count == 0
+            ? new List<Guid?> { null }
+            : communityIds.Distinct().Select(cid => (Guid?)cid).ToList();
+
+        var existing = await db.UserRoles
+            .IgnoreQueryFilters()
+            .Where(ur => ur.UserId == userId)
+            .ToListAsync(cancellationToken);
+
+        foreach (var ur in existing.Where(ur => !ur.IsDeleted))
+        {
+            var stillWanted = ur.RoleId == role.Id && desiredScopes.Contains(ur.CommunityId);
+            if (!stillWanted)
+            {
+                ur.IsDeleted = true;
+            }
+        }
+
+        foreach (var cid in desiredScopes)
+        {
+            var revived = existing.FirstOrDefault(ur => ur.IsDeleted && ur.RoleId == role.Id && ur.CommunityId == cid);
+            if (revived is not null)
+            {
+                revived.IsDeleted = false;
+                continue;
+            }
+            var alreadyLive = existing.Any(ur => !ur.IsDeleted && ur.RoleId == role.Id && ur.CommunityId == cid);
+            if (!alreadyLive)
+            {
+                db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id, CommunityId = cid });
+            }
+        }
+
+        await UniqueConstraintGuard.SaveTranslatingUniqueViolationAsync(
+            () => db.SaveChangesAsync(cancellationToken),
+            "That role scope is already assigned.");
+
+        // Approval email: a PowerUser flipping a society admin from Suspended to Active IS the
+        // approval gate. Send it after the commit, non-blocking and failure-tolerant — a mail hiccup
+        // must never roll back the activation (steering: fail safe, not fatal).
+        if (previousStatus == UserStatus.Suspended && status == UserStatus.Active)
+        {
+            await SendActivationNotificationAsync(user, communityIds, cancellationToken);
+        }
+
+        var assignments = communityIds.Count == 0
+            ? new List<AdminUserRoleScopeDto> { new(role.Id, role.Name, null) }
+            : communityIds.Distinct().Select(cid => new AdminUserRoleScopeDto(role.Id, role.Name, cid)).ToList();
+
+        return new AdminUserDto(user.Id, user.Name, user.Email, user.Phone, user.Status.ToString(), [role.Name], assignments);
+    }
+
+    private async Task SendActivationNotificationAsync(User user, List<Guid> communityIds, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var scopeCommunityId = communityIds.Count > 0 ? communityIds[0] : (Guid?)null;
+            if (scopeCommunityId is not { } communityId)
+            {
+                return; // platform admin (no community) — no society activation email applies.
+            }
+
+            var societyName = await db.Communities.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.Id == communityId).Select(c => c.Name).FirstOrDefaultAsync(cancellationToken);
+            var portalUrl = (await config.GetStringAsync(PortalUrlKey, DefaultPortalUrl, communityId, cancellationToken)).TrimEnd('/');
+
+            var placeholders = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["name"] = string.IsNullOrWhiteSpace(user.Name) ? "there" : user.Name!,
+                ["societyName"] = string.IsNullOrWhiteSpace(societyName) ? "your society" : societyName!,
+                ["portalUrl"] = portalUrl,
+                ["loginId"] = user.Email ?? user.Phone ?? "the email/phone you registered with",
+            };
+
+            // Editable, templated notification (admin.society.activated) — subject/body + placeholders
+            // live as data, rendered + wrapped in the shared email layout. EnqueueAsync is Add-only
+            // (transactional outbox); the activation already committed, so flush the queued rows here.
+            await notifications.EnqueueAsync(
+                new NotificationRequest(NotificationTemplateKeys.SocietyActivated, user.Id, communityId, placeholders),
+                cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to queue activation notification for admin user {UserId}", user.Id);
+        }
+    }
+
+    public async Task DeleteAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken)
+            ?? throw new NotFoundException("User not found.");
+
+        var roleRows = await db.UserRoles.Where(ur => ur.UserId == userId).ToListAsync(cancellationToken);
+        foreach (var ur in roleRows)
+        {
+            ur.IsDeleted = true;
+        }
+        user.IsDeleted = true;
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<List<Guid>> ResolveScopeCommunityIdsAsync(
+        string roleName, Guid? organizationId, Guid? communityId, CancellationToken cancellationToken)
+    {
+        if (string.Equals(roleName, "PowerUser", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        if (string.Equals(roleName, "OrganizationAdmin", StringComparison.OrdinalIgnoreCase))
+        {
+            if (organizationId is not { } orgId)
+            {
+                throw new ValidationException("organizationId", "An organization is required for an organization admin.");
+            }
+            var ids = await db.Communities.IgnoreQueryFilters()
+                .Where(c => c.OrganizationId == orgId && !c.IsDeleted)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+            if (ids.Count == 0)
+            {
+                throw new ValidationException("organizationId", "The organization has no communities to scope to.");
+            }
+            return ids;
+        }
+
+        if (communityId is not { } cid)
+        {
+            throw new ValidationException("communityId", "A community is required for a community admin.");
+        }
+        return [cid];
+    }
+}
