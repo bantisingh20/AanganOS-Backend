@@ -88,7 +88,9 @@ public sealed class RoleService(AppDbContext db, IAuditService audit, IPageSizeP
 
         // Replace the grant set wholesale: drop existing join rows, add the resolved set.
         db.RemoveRange(role.RolePermissions);
-        role.RolePermissions = permissions.Select(p => new RolePermission { RoleId = role.Id, PermissionId = p.Id }).ToList();
+        var newRolePermissions = permissions.Select(p => new RolePermission { RoleId = role.Id, PermissionId = p.Id }).ToList();
+        db.RolePermissions.AddRange(newRolePermissions);
+        role.RolePermissions = newRolePermissions;
 
         await UniqueConstraintGuard.SaveTranslatingUniqueViolationAsync(
             () => db.SaveChangesAsync(cancellationToken), DuplicateMessage);
@@ -190,17 +192,62 @@ public sealed class RoleService(AppDbContext db, IAuditService audit, IPageSizeP
 
         // Single joined query over the small candidate set (filtered by the resource types/actions
         // asked for), then exact-match in memory — no per-grant round trip (no N+1).
-        var candidates = await db.Permissions.AsNoTracking()
+        // Single joined query over candidate set
+        var candidates = await db.Permissions
             .Where(p => resourceTypes.Contains(p.ResourceType) && actions.Contains(p.Action))
             .ToListAsync(cancellationToken);
 
         var resolved = new List<Permission>(wanted.Count);
+        var newlyCreated = new List<Permission>();
+
         foreach (var w in wanted)
         {
-            var match = candidates.FirstOrDefault(p => p.ResourceType == w.ResourceType && p.Action == w.Action)
-                ?? throw new ValidationException("permissions",
-                    $"Unknown permission '{w.Action} {w.ResourceType}'. Register it in the permission catalog first.");
+            var match = candidates.FirstOrDefault(p =>
+                string.Equals(p.ResourceType, w.ResourceType, StringComparison.OrdinalIgnoreCase) &&
+                p.Action == w.Action);
+
+            if (match is null)
+            {
+                // Auto-register missing permission on-the-fly so new UI/Menu resources never fail
+                match = new Permission
+                {
+                    ResourceType = w.ResourceType,
+                    Action = w.Action,
+                };
+                db.Permissions.Add(match);
+                candidates.Add(match);
+                newlyCreated.Add(match);
+            }
+
             resolved.Add(match);
+        }
+
+        if (newlyCreated.Count > 0)
+        {
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                // Concurrency resilience: if another process inserted concurrently, detach and re-query
+                foreach (var p in newlyCreated)
+                {
+                    db.Entry(p).State = EntityState.Detached;
+                }
+
+                var fresh = await db.Permissions.AsNoTracking()
+                    .Where(p => resourceTypes.Contains(p.ResourceType) && actions.Contains(p.Action))
+                    .ToListAsync(cancellationToken);
+
+                resolved = wanted
+                    .Select(w => fresh.FirstOrDefault(p =>
+                        string.Equals(p.ResourceType, w.ResourceType, StringComparison.OrdinalIgnoreCase) &&
+                        p.Action == w.Action) ?? candidates.First(c =>
+                            string.Equals(c.ResourceType, w.ResourceType, StringComparison.OrdinalIgnoreCase) &&
+                            c.Action == w.Action))
+                    .ToList();
+            }
         }
 
         return resolved;

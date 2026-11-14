@@ -47,7 +47,9 @@ public sealed class CorrelationIdMiddleware(
             // Prefer the matched route template over the raw path for metric cardinality (no ids);
             // fall back to the path for the human-readable log line.
             var routeTemplate = context.GetEndpoint()?.DisplayName ?? context.Request.Path.Value ?? "unknown";
-            var statusCode = context.Response.StatusCode;
+            var statusCode = context.RequestAborted.IsCancellationRequested && context.Response.StatusCode == 200
+                ? 499
+                : context.Response.StatusCode;
             var elapsedMs = Stopwatch.GetElapsedTime(timestamp).TotalMilliseconds;
 
             _logger.LogInformation(

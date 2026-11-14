@@ -22,7 +22,9 @@ public sealed record ResidentDto(
     string? GovtIdBackFileId = null,
     string? LoginStatus = null,
     string? CommunityName = null,
-    string? OrganizationName = null);
+    string? OrganizationName = null,
+    string? RoleName = null,
+    IReadOnlyList<string>? Roles = null);
 
 
 public sealed record HouseholdMemberDto(
@@ -75,7 +77,8 @@ public sealed record CreateResidentRequest(
     string? Email,
     string? Phone,
     string ResidentType,
-    string? PhotoFileId = null);
+    string? PhotoFileId = null,
+    Guid? OrganizationId = null);
 
 /// <summary>The signed-in resident's own KYC submission (draft/rejected → pending). All optional.</summary>
 public sealed record SubmitKycRequest(

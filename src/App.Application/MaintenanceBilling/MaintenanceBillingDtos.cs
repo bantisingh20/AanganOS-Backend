@@ -7,7 +7,9 @@ public sealed record MaintenanceChargeDto(
     decimal Amount,
     string Label,
     bool IsActive,
-    string? UnitNumber = null);
+    string? UnitNumber = null,
+    string? CommunityName = null,
+    string? OrganizationName = null);
 
 public sealed record MaintenanceDefaulterDto(
     Guid UnitId,
@@ -41,7 +43,9 @@ public sealed record MaintenanceExpenseDto(
     decimal Amount,
     DateTime SpentOnUtc,
     string Vendor,
-    string Notes);
+    string Notes,
+    string? CommunityName = null,
+    string? OrganizationName = null);
 
 public sealed record SaveMaintenanceExpenseRequest(
     Guid CommunityId,

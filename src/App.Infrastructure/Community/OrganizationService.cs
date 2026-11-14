@@ -93,36 +93,53 @@ public sealed class OrganizationService(
         return org is null ? null : ToDto(org);
     }
 
-    public async Task<PagedData<OrganizationDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<OrganizationDto>> ListAsync(
+   ListQueryParameters parameters,
+   CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        // The global soft-delete filter excludes archived organizations from ordinary lists.
         var paged = await db.Organizations.AsNoTracking().ToPagedResultAsync(
             parameters, QueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
 
         var orgIds = paged.Items.Select(o => o.Id).ToList();
-        if (orgIds.Count == 0)
-        {
-            return paged;
-        }
 
-        // An org is "active" once at least one Active admin login is scoped to one of its
-        // communities (the approval gate flips a registered org's admin from Suspended to Active).
-        var activeOrgIds = await (
+        if (orgIds.Count == 0)
+            return paged;
+
+        var data = await (
             from c in db.Communities.AsNoTracking().IgnoreQueryFilters()
             where orgIds.Contains(c.OrganizationId)
-            join ur in db.UserRoles.AsNoTracking().IgnoreQueryFilters() on c.Id equals ur.CommunityId
+            join ur in db.UserRoles.AsNoTracking().IgnoreQueryFilters()
+                on c.Id equals ur.CommunityId
             where !ur.IsDeleted
-            join u in db.Users.AsNoTracking().IgnoreQueryFilters() on ur.UserId equals u.Id
-            where !u.IsDeleted && u.Status == App.Domain.Identity.UserStatus.Active
-            select c.OrganizationId).Distinct().ToListAsync(cancellationToken);
+            join u in db.Users.AsNoTracking().IgnoreQueryFilters()
+                on ur.UserId equals u.Id
+            where !u.IsDeleted &&
+                  u.Status == App.Domain.Identity.UserStatus.Active
+            group c by c.OrganizationId into g
+            select new
+            {
+                OrganizationId = g.Key,
+                CommunityCount = g.Select(x => x.Id).Distinct().Count(),
+                HasActiveAdmin = g.Any()
+            }
+        ).ToListAsync(cancellationToken);
 
-        var activeSet = activeOrgIds.ToHashSet();
+        var orgData = data.ToDictionary(x => x.OrganizationId);
 
         return new PagedData<OrganizationDto>
         {
-            Items = paged.Items.Select(o => o with { HasActiveAdmin = activeSet.Contains(o.Id) }).ToList(),
+            Items = paged.Items.Select(o =>
+            {
+                orgData.TryGetValue(o.Id, out var org);
+
+                return o with
+                {
+                    HasActiveAdmin = org != null && org.HasActiveAdmin,
+                    CommunityCount = org?.CommunityCount ?? 0
+                };
+            }).ToList(),
             Page = paged.Page,
             PageSize = paged.PageSize,
             TotalCount = paged.TotalCount,

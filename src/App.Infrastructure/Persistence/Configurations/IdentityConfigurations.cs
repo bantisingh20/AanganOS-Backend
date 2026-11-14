@@ -1,4 +1,4 @@
-﻿using App.Domain.Identity;
+using App.Domain.Identity;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore;
 
@@ -116,6 +116,7 @@ public sealed class MenuItemEntityConfiguration : IEntityTypeConfiguration<MenuI
             Item("admin.roles", "Roles & Permissions", admin, "/roles", "KeyRound", 15, parentKey: "admin.group.administration", actions: [PermissionAction.View], resource: "Role"),
             Item("admin.menu", "Menu Management", admin, "/menu-management", "MenuOutlined", 20, parentKey: "admin.group.administration", actions: [PermissionAction.Edit], resource: "Role"),
             Item("admin.config", "Configuration", admin, "/config", "SettingOutlined", 30, parentKey: "admin.group.administration", actions: [PermissionAction.Edit], resource: "Configuration"),
+            Item("admin.notification-templates", "Notification Templates", admin, "/notification-templates", "MailOutlined", 35, parentKey: "admin.group.administration", actions: [PermissionAction.View], resource: "Configuration"),
 
             Item("app.home", "Home", app, "home", "home", 0),
             Item("app.services", "Services", app, "services", "grid", 10),
@@ -430,6 +431,7 @@ public sealed class PermissionEntityConfiguration : IEntityTypeConfiguration<Per
             ("MaintenanceCharge", [PermissionAction.View, PermissionAction.Create, PermissionAction.Edit]),
             ("MaintenanceBill", [PermissionAction.View, PermissionAction.Create, PermissionAction.Edit]),
             ("MaintenancePayment", [PermissionAction.View, PermissionAction.Create, PermissionAction.Approve]),
+            ("MaintenanceExpense", [PermissionAction.View, PermissionAction.Create, PermissionAction.Edit]),
         };
 
         foreach (var (resourceType, actions) in catalog)

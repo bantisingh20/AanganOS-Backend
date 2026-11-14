@@ -51,14 +51,38 @@ public sealed class ResidentService(
     {
         ArgumentNullException.ThrowIfNull(request);
         RequireName(request.Name);
-        await RequireValidResidentTypeAsync(request.ResidentType, request.CommunityId, cancellationToken);
+        var communityId = request.CommunityId;
+        if (communityId == Guid.Empty)
+        {
+            if (request.OrganizationId.HasValue)
+            {
+                communityId = await db.Communities.AsNoTracking()
+                    .Where(c => c.OrganizationId == request.OrganizationId.Value && !c.IsDeleted)
+                    .Select(c => c.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+            if (communityId == Guid.Empty)
+            {
+                communityId = await db.Communities.AsNoTracking()
+                    .Where(c => !c.IsDeleted)
+                    .Select(c => c.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+        }
+
+        if (communityId == Guid.Empty)
+        {
+            throw new ValidationException("communityId", "A valid community is required.");
+        }
+
+        await RequireValidResidentTypeAsync(request.ResidentType, communityId, cancellationToken);
 
        
         var createdByApprover = await authorizationGuard.HasPermissionAsync(PermissionAction.Approve, "Resident", cancellationToken);
 
         var resident = new Resident
         {
-            CommunityId = request.CommunityId,
+            CommunityId = communityId,
             UserId = request.UserId,
             Name = request.Name.Trim(),
             Email = request.Email?.Trim(),
@@ -121,12 +145,13 @@ public sealed class ResidentService(
 
         // Keep the linked login (Users row) in sync — login resolves by Users.Email/Phone, so a
         // resident contact change MUST propagate to the user or the old number keeps working.
-        if ((request.UpdateEmail || request.UpdatePhone) && resident.UserId is { } linkedUserId)
+        if (resident.UserId is { } linkedUserId)
         {
             var user = await db.Users.IgnoreQueryFilters()
                 .FirstOrDefaultAsync(u => u.Id == linkedUserId, cancellationToken);
             if (user is not null)
             {
+                if (request.Name is not null) user.Name = resident.Name;
                 if (request.UpdateEmail) user.Email = newEmail;
                 if (request.UpdatePhone) user.Phone = newPhone;
             }
@@ -204,6 +229,21 @@ public sealed class ResidentService(
                 .Select(u => new { u.Id, u.Status })
                 .ToDictionaryAsync(u => u.Id, u => u.Status.ToString(), cancellationToken);
 
+        var rolesById = userIds.Count == 0
+            ? new Dictionary<Guid, List<string>>()
+            : await (
+                from ur in db.UserRoles.AsNoTracking()
+                where userIds.Contains(ur.UserId) && !ur.IsDeleted
+                join ro in db.Roles.AsNoTracking() on ur.RoleId equals ro.Id
+                where !ro.IsDeleted
+                select new { ur.UserId, ro.Name }
+            )
+            .GroupBy(x => x.UserId)
+            .ToDictionaryAsync(
+                g => g.Key,
+                g => g.Select(x => x.Name).Distinct().ToList(),
+                cancellationToken);
+
         var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
             db, paged.Items.Select(r => r.CommunityId), cancellationToken);
 
@@ -213,9 +253,12 @@ public sealed class ResidentService(
                 var withStatus = r.UserId is { } uid && statusById.TryGetValue(uid, out var s)
                     ? r with { LoginStatus = s }
                     : r;
-                return names.TryGetValue(r.CommunityId, out var n)
-                    ? withStatus with { CommunityName = n.Community, OrganizationName = n.Organization }
+                var withRoles = r.UserId is { } ruid && rolesById.TryGetValue(ruid, out var rl)
+                    ? withStatus with { Roles = rl, RoleName = rl.FirstOrDefault() }
                     : withStatus;
+                return names.TryGetValue(r.CommunityId, out var n)
+                    ? withRoles with { CommunityName = n.Community, OrganizationName = n.Organization }
+                    : withRoles;
             })
             .ToList();
 
@@ -511,6 +554,7 @@ public sealed class ResidentService(
         var isEmail = identifier.Contains('@', StringComparison.Ordinal);
         var user = new User
         {
+            Name = resident.Name,
             Email = isEmail ? identifier : null,
             Phone = isEmail ? null : identifier,
             PasswordHash = passwordHasher.Hash(request.Password),
@@ -949,6 +993,11 @@ public sealed class ResidentService(
         if (string.IsNullOrWhiteSpace(residentType))
         {
             throw new ValidationException("residentType", "A resident type is required.");
+        }
+
+        if (string.Equals(residentType.Trim(), "security", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
         }
 
         // Validate against the configurable Resident_Type list resolved for this community (Req 15.1)

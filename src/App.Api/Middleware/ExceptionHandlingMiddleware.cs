@@ -40,6 +40,16 @@ public sealed class ExceptionHandlingMiddleware
         {
             await _next(context);
         }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // Client closed connection, aborted request, or navigated away. Normal HTTP cancellation.
+            _logger.LogInformation("Request {Path} was canceled by the client (correlationId {CorrelationId})",
+                context.Request.Path.Value, correlationId);
+            if (!context.Response.HasStarted)
+            {
+                context.Response.StatusCode = 499;
+            }
+        }
         catch (AppException ex)
         {
             // Known, semantic failure: safe to surface its code + client-facing message.

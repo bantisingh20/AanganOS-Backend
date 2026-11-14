@@ -11,7 +11,10 @@ namespace App.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/files")]
-public sealed class FilesController(IFileService files, ITenantContext tenant) : ControllerBase
+public sealed class FilesController(
+    IFileService files,
+    ITenantContext tenant,
+    IImageCompressionService compression) : ControllerBase
 {
     [HttpPost]
     [DisableRequestSizeLimit]
@@ -52,6 +55,60 @@ public sealed class FilesController(IFileService files, ITenantContext tenant) :
         return Ok(ApiResult<StoredFileReference>.Ok(reference, string.Empty));
     }
 
+    /// <summary>
+    /// Uploads an image supplied as a Base64 string (e.g. from camera capture, canvas, or scanner).
+    /// Automatically compresses to &lt; 500KB - 1MB and persists into StoredFiles blob store.
+    /// Returns the StoredFileReference whose Id can be stored as PhotoFileId/AttachmentId.
+    /// </summary>
+    [HttpPost("base64")]
+    [DisableRequestSizeLimit]
+    [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
+    [RequirePermission(PermissionAction.Create, "File")]
+    public async Task<IActionResult> UploadBase64(
+        [FromBody] UploadBase64Body body,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        if (string.IsNullOrWhiteSpace(body.Base64))
+        {
+            throw new ValidationException("base64", "base64 image content is required");
+        }
+        if (string.IsNullOrWhiteSpace(body.OwningResourceType))
+        {
+            throw new ValidationException("owningResourceType", "owningResourceType is required");
+        }
+        if (!tenant.IsPlatformSuperAdmin && !tenant.AuthorizedCommunityIds.Contains(body.CommunityId))
+        {
+            throw new ForbiddenException("You are not authorized for the target community.");
+        }
+
+        var fileName = string.IsNullOrWhiteSpace(body.FileName)
+            ? $"{body.OwningResourceType.ToLowerInvariant()}-{Guid.NewGuid():N}.jpg"
+            : body.FileName.Trim();
+
+        var compressed = await compression.CompressBase64Async(
+            body.Base64,
+            defaultFileName: fileName,
+            maxWidth: body.MaxWidth ?? 1920,
+            maxHeight: body.MaxHeight ?? 1080,
+            targetMaxSizeBytes: body.TargetMaxSizeBytes ?? (500 * 1024),
+            cancellationToken: ct);
+
+        await using var stream = compressed.Stream;
+        var reference = await files.StoreAsync(
+            new StoreFileRequest(
+                OwningResourceType: body.OwningResourceType,
+                OwningResourceId: body.OwningResourceId,
+                CommunityId: body.CommunityId,
+                FileName: fileName,
+                ContentType: compressed.ContentType,
+                Content: stream),
+            ct);
+
+        return Ok(ApiResult<StoredFileReference>.Ok(reference, string.Empty));
+    }
+
     [HttpGet("{reference:guid}")]
     [RequirePermission(PermissionAction.View, "File")]
     public async Task<IActionResult> Download(Guid reference, CancellationToken ct)
@@ -60,3 +117,13 @@ public sealed class FilesController(IFileService files, ITenantContext tenant) :
         return File(opened.Content, opened.ContentType, opened.FileName, enableRangeProcessing: true);
     }
 }
+
+public sealed record UploadBase64Body(
+    string Base64,
+    string OwningResourceType,
+    Guid CommunityId,
+    Guid? OwningResourceId = null,
+    string? FileName = null,
+    int? MaxWidth = null,
+    int? MaxHeight = null,
+    long? TargetMaxSizeBytes = null);

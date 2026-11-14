@@ -219,22 +219,47 @@ public sealed class MaintenanceBillingService(
         return new BulkSetMaintenanceChargeResult(request.CommunityId, created, updated);
     }
 
-    public async Task<IReadOnlyList<MaintenanceChargeDto>> ListChargesAsync(Guid communityId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<MaintenanceChargeDto>> ListChargesAsync(Guid? communityId, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         if (!await authorizationGuard.HasPermissionAsync(PermissionAction.View, "MaintenanceCharge", cancellationToken))
         {
             throw new ForbiddenException("You do not have permission to view maintenance charges.");
         }
 
-        var charges = await db.MaintenanceCharges.AsNoTracking()
-            .Where(c => c.CommunityId == communityId)
+        var query = db.MaintenanceCharges.AsNoTracking().AsQueryable();
+
+        if (communityId.HasValue && communityId.Value != Guid.Empty)
+        {
+            query = query.Where(c => c.CommunityId == communityId.Value);
+        }
+        else if (organizationId.HasValue && organizationId.Value != Guid.Empty)
+        {
+            var commIds = await db.Communities.AsNoTracking()
+                .Where(c => c.OrganizationId == organizationId.Value)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+            query = query.Where(c => commIds.Contains(c.CommunityId));
+        }
+
+        var charges = await query
             .OrderBy(c => c.UnitId)
             .ToListAsync(cancellationToken);
 
         var unitNumbers = await ResolveUnitNumbersAsync(charges.Select(c => c.UnitId), cancellationToken);
+        var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
+            db, charges.Select(c => c.CommunityId).Distinct(), cancellationToken);
 
         return charges
-            .Select(c => unitNumbers.TryGetValue(c.UnitId, out var un) ? ToDto(c) with { UnitNumber = un } : ToDto(c))
+            .Select(c =>
+            {
+                names.TryGetValue(c.CommunityId, out var n);
+                var dto = unitNumbers.TryGetValue(c.UnitId, out var un) ? ToDto(c) with { UnitNumber = un } : ToDto(c);
+                return dto with
+                {
+                    CommunityName = names.TryGetValue(c.CommunityId, out var nc) ? nc.Community : null,
+                    OrganizationName = names.TryGetValue(c.CommunityId, out var nc2) ? nc2.Organization : null
+                };
+            })
             .ToList();
     }
 
@@ -329,17 +354,33 @@ public sealed class MaintenanceBillingService(
             .ToList();
     }
 
-    public async Task<MaintenanceCollectionSummaryDto> GetCollectionSummaryAsync(Guid? communityId, CancellationToken cancellationToken = default)
+    public async Task<MaintenanceCollectionSummaryDto> GetCollectionSummaryAsync(Guid? communityId, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         if (!await authorizationGuard.HasPermissionAsync(PermissionAction.View, "MaintenanceBill", cancellationToken))
         {
             throw new ForbiddenException("You do not have permission to view maintenance bills.");
         }
 
-        var bills = db.MaintenanceBills.AsNoTracking().AsQueryable();
-        if (communityId is { } cid)
+        List<Guid>? scopedCommunityIds = null;
+        if (communityId.HasValue && communityId.Value != Guid.Empty)
         {
-            bills = bills.Where(b => b.CommunityId == cid);
+            scopedCommunityIds = [communityId.Value];
+        }
+        else if (organizationId.HasValue && organizationId.Value != Guid.Empty)
+        {
+            scopedCommunityIds = await db.Communities.AsNoTracking()
+                .Where(c => c.OrganizationId == organizationId.Value)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+        }
+
+        var bills = db.MaintenanceBills.AsNoTracking().AsQueryable();
+        var expenseQuery = db.MaintenanceExpenses.AsNoTracking().AsQueryable();
+
+        if (scopedCommunityIds != null)
+        {
+            bills = bills.Where(b => scopedCommunityIds.Contains(b.CommunityId));
+            expenseQuery = expenseQuery.Where(e => scopedCommunityIds.Contains(e.CommunityId));
         }
 
         var perCommunity = await bills
@@ -354,26 +395,6 @@ public sealed class MaintenanceBillingService(
             })
             .ToListAsync(cancellationToken);
 
-        var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
-            db, perCommunity.Select(x => x.CommunityId), cancellationToken);
-
-        var byCommunity = perCommunity
-            .Select(x => new MaintenanceCollectionByCommunityDto(
-                x.CommunityId,
-                names.TryGetValue(x.CommunityId, out var n) ? n.Community : "",
-                names.TryGetValue(x.CommunityId, out var n2) ? n2.Organization : "",
-                x.Collected,
-                x.Outstanding))
-            .OrderBy(x => x.OrganizationName, StringComparer.Ordinal)
-            .ThenBy(x => x.CommunityName, StringComparer.Ordinal)
-            .ToList();
-
-        var expenseQuery = db.MaintenanceExpenses.AsNoTracking().AsQueryable();
-        if (communityId is { } ecid)
-        {
-            expenseQuery = expenseQuery.Where(e => e.CommunityId == ecid);
-        }
-
         var ledgerByCommunity = await expenseQuery
             .GroupBy(e => e.CommunityId)
             .Select(g => new
@@ -384,34 +405,90 @@ public sealed class MaintenanceBillingService(
             })
             .ToDictionaryAsync(x => x.CommunityId, x => x, cancellationToken);
 
-        byCommunity = byCommunity
-            .Select(c => ledgerByCommunity.TryGetValue(c.CommunityId, out var l)
-                ? c with { Spent = l.Spent, Received = l.Received }
-                : c)
+        var allCommunityIds = perCommunity.Select(x => x.CommunityId)
+            .Union(ledgerByCommunity.Keys);
+        if (scopedCommunityIds != null)
+        {
+            allCommunityIds = allCommunityIds.Union(scopedCommunityIds);
+        }
+        var distinctCommunityIds = allCommunityIds.Distinct().ToList();
+
+        var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
+            db, distinctCommunityIds, cancellationToken);
+
+        var perCommunityDict = perCommunity.ToDictionary(x => x.CommunityId);
+
+        var byCommunity = distinctCommunityIds
+            .Select(cid =>
+            {
+                var bill = perCommunityDict.TryGetValue(cid, out var b) ? b : null;
+                var ledger = ledgerByCommunity.TryGetValue(cid, out var l) ? l : null;
+                return new MaintenanceCollectionByCommunityDto(
+                    cid,
+                    names.TryGetValue(cid, out var n) ? n.Community : "",
+                    names.TryGetValue(cid, out var n2) ? n2.Organization : "",
+                    bill?.Collected ?? 0m,
+                    bill?.Outstanding ?? 0m,
+                    ledger?.Spent ?? 0m,
+                    ledger?.Received ?? 0m);
+            })
+            .OrderBy(x => x.OrganizationName, StringComparer.Ordinal)
+            .ThenBy(x => x.CommunityName, StringComparer.Ordinal)
             .ToList();
 
+        var totalCollected = perCommunity.Sum(x => x.Collected);
+        var totalReceived = ledgerByCommunity.Values.Sum(x => x.Received);
+        var totalOutstanding = perCommunity.Sum(x => x.Outstanding);
+        var paidCount = perCommunity.Sum(x => x.PaidCount);
+        var unpaidCount = perCommunity.Sum(x => x.UnpaidCount);
+
         return new MaintenanceCollectionSummaryDto(
-            perCommunity.Sum(x => x.Collected),
-            perCommunity.Sum(x => x.Outstanding),
-            perCommunity.Sum(x => x.PaidCount),
-            perCommunity.Sum(x => x.UnpaidCount),
+            totalCollected,
+            totalOutstanding,
+            paidCount,
+            unpaidCount,
             byCommunity,
-            byCommunity.Sum(x => x.Received));
+            totalReceived);
     }
 
-    public async Task<IReadOnlyList<MaintenanceExpenseDto>> ListExpensesAsync(Guid communityId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<MaintenanceExpenseDto>> ListExpensesAsync(Guid? communityId, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         if (!await authorizationGuard.HasPermissionAsync(PermissionAction.View, "MaintenanceBill", cancellationToken))
         {
             throw new ForbiddenException("You do not have permission to view maintenance expenses.");
         }
 
-        var rows = await db.MaintenanceExpenses.AsNoTracking()
-            .Where(e => e.CommunityId == communityId)
+        var query = db.MaintenanceExpenses.AsNoTracking().AsQueryable();
+
+        if (communityId.HasValue && communityId.Value != Guid.Empty)
+        {
+            query = query.Where(e => e.CommunityId == communityId.Value);
+        }
+        else if (organizationId.HasValue && organizationId.Value != Guid.Empty)
+        {
+            var commIds = await db.Communities.AsNoTracking()
+                .Where(c => c.OrganizationId == organizationId.Value)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+            query = query.Where(e => commIds.Contains(e.CommunityId));
+        }
+
+        var rows = await query
             .OrderByDescending(e => e.SpentOnUtc)
             .ToListAsync(cancellationToken);
 
-        return rows.Select(ToDto).ToList();
+        var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
+            db, rows.Select(e => e.CommunityId).Distinct(), cancellationToken);
+
+        return rows.Select(e =>
+        {
+            names.TryGetValue(e.CommunityId, out var n);
+            return ToDto(e) with
+            {
+                CommunityName = names.TryGetValue(e.CommunityId, out var ne) ? ne.Community : null,
+                    OrganizationName = names.TryGetValue(e.CommunityId, out var ne2) ? ne2.Organization : null
+            };
+        }).ToList();
     }
 
     public async Task<MaintenanceExpenseDto> CreateExpenseAsync(SaveMaintenanceExpenseRequest request, CancellationToken cancellationToken = default)
@@ -624,11 +701,26 @@ public sealed class MaintenanceBillingService(
         return new GenerateBillsResult(request.CommunityId, request.PeriodYear, request.PeriodMonth, toCreate.Count, skipped);
     }
 
-    public async Task<PagedData<MaintenanceBillDto>> ListBillsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
+    public async Task<PagedData<MaintenanceBillDto>> ListBillsAsync(ListQueryParameters parameters, Guid? communityId = null, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        var paged = await db.MaintenanceBills.AsNoTracking().ToPagedResultAsync(
+        var query = db.MaintenanceBills.AsNoTracking().AsQueryable();
+
+        if (communityId.HasValue && communityId.Value != Guid.Empty)
+        {
+            query = query.Where(b => b.CommunityId == communityId.Value);
+        }
+        else if (organizationId.HasValue && organizationId.Value != Guid.Empty)
+        {
+            var commIds = await db.Communities.AsNoTracking()
+                .Where(c => c.OrganizationId == organizationId.Value)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+            query = query.Where(b => commIds.Contains(b.CommunityId));
+        }
+
+        var paged = await query.ToPagedResultAsync(
             parameters, BillQueryConfig, b => ToDto(b), pageSizePolicy, executor, cancellationToken);
 
         var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
@@ -871,15 +963,30 @@ public sealed class MaintenanceBillingService(
         return ToDto(payment);
     }
 
-    public async Task<IReadOnlyList<PendingPaymentDto>> ListPendingPaymentsAsync(Guid communityId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PendingPaymentDto>> ListPendingPaymentsAsync(Guid? communityId, Guid? organizationId = null, CancellationToken cancellationToken = default)
     {
         if (!await authorizationGuard.HasPermissionAsync(PermissionAction.Approve, "MaintenancePayment", cancellationToken))
         {
             throw new ForbiddenException("You do not have permission to view pending maintenance payments.");
         }
 
-        var rows = await db.MaintenancePayments.AsNoTracking()
-            .Where(p => p.CommunityId == communityId && p.Status == DomainPendingApproval)
+        var payments = db.MaintenancePayments.AsNoTracking()
+            .Where(p => p.Status == DomainPendingApproval);
+
+        if (communityId.HasValue && communityId.Value != Guid.Empty)
+        {
+            payments = payments.Where(p => p.CommunityId == communityId.Value);
+        }
+        else if (organizationId.HasValue && organizationId.Value != Guid.Empty)
+        {
+            var commIds = await db.Communities.AsNoTracking()
+                .Where(c => c.OrganizationId == organizationId.Value)
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+            payments = payments.Where(p => commIds.Contains(p.CommunityId));
+        }
+
+        var rows = await payments
             .Join(
                 db.MaintenanceBills.AsNoTracking(),
                 p => p.MaintenanceBillId,

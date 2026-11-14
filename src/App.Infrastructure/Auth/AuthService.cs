@@ -672,11 +672,33 @@ public sealed class AuthService(
             select new { ur.CommunityId, ur.RoleId, RoleName = r.Name })
             .ToListAsync(cancellationToken);
 
-        var communityIds = assignments
+        var communityList = assignments
             .Where(a => a.CommunityId.HasValue)
             .Select(a => a.CommunityId!.Value)
             .Distinct()
-            .ToArray();
+            .ToList();
+
+        var isOrgAdmin = assignments.Any(a => string.Equals(a.RoleName, "OrganizationAdmin", StringComparison.OrdinalIgnoreCase));
+        if (isOrgAdmin && communityList.Count > 0)
+        {
+            var firstCommunityId = communityList[0];
+            var orgId = await db.Communities.IgnoreQueryFilters().AsNoTracking()
+                .Where(c => c.Id == firstCommunityId)
+                .Select(c => c.OrganizationId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (orgId != Guid.Empty)
+            {
+                var allOrgCommunityIds = await db.Communities.IgnoreQueryFilters().AsNoTracking()
+                    .Where(c => c.OrganizationId == orgId && !c.IsDeleted)
+                    .Select(c => c.Id)
+                    .ToListAsync(cancellationToken);
+
+                communityList = communityList.Union(allOrgCommunityIds).Distinct().ToList();
+            }
+        }
+
+        var communityIds = communityList.ToArray();
 
         // A platform-scoped assignment (null CommunityId) confers the cross-community short-circuit.
         var isSuperAdmin = assignments.Any(a => a.CommunityId is null);

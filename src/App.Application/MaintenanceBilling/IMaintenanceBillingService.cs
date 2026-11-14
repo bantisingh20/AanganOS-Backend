@@ -9,11 +9,11 @@ public interface IMaintenanceBillingService
 
     Task<BulkSetMaintenanceChargeResult> BulkSetChargesAsync(BulkSetMaintenanceChargeRequest request, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<MaintenanceChargeDto>> ListChargesAsync(Guid communityId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<MaintenanceChargeDto>> ListChargesAsync(Guid? communityId, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
     Task<GenerateBillsResult> GenerateBillsAsync(GenerateBillsRequest request, CancellationToken cancellationToken = default);
 
-    Task<PagedData<MaintenanceBillDto>> ListBillsAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default);
+    Task<PagedData<MaintenanceBillDto>> ListBillsAsync(ListQueryParameters parameters, Guid? communityId = null, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
     Task<MaintenanceBillDto?> GetBillAsync(Guid billId, CancellationToken cancellationToken = default);
 
@@ -23,7 +23,7 @@ public interface IMaintenanceBillingService
 
     Task<MaintenancePaymentDto> RejectPaymentAsync(Guid paymentId, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<PendingPaymentDto>> ListPendingPaymentsAsync(Guid communityId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<PendingPaymentDto>> ListPendingPaymentsAsync(Guid? communityId, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<MaintenancePaymentDto>> ListPaymentsForBillAsync(Guid billId, CancellationToken cancellationToken = default);
 
@@ -37,9 +37,9 @@ public interface IMaintenanceBillingService
 
     Task<IReadOnlyList<MaintenanceDefaulterDto>> ListDefaultersAsync(CancellationToken cancellationToken = default);
 
-    Task<MaintenanceCollectionSummaryDto> GetCollectionSummaryAsync(Guid? communityId, CancellationToken cancellationToken = default);
+    Task<MaintenanceCollectionSummaryDto> GetCollectionSummaryAsync(Guid? communityId, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<MaintenanceExpenseDto>> ListExpensesAsync(Guid communityId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<MaintenanceExpenseDto>> ListExpensesAsync(Guid? communityId, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
     Task<MaintenanceExpenseDto> CreateExpenseAsync(SaveMaintenanceExpenseRequest request, CancellationToken cancellationToken = default);
 

@@ -5,7 +5,7 @@ namespace App.Application.Identity;
 
 public sealed record CreateUserRequest(string? Email, string? Phone, string? PasswordHash = null, bool MfaEnabled = false);
 
-public sealed record UpdateUserRequest(string? Email = null, string? Phone = null, UserStatus? Status = null, bool? MfaEnabled = null);
+public sealed record UpdateUserRequest(string? Email = null, string? Phone = null, UserStatus? Status = null, bool? MfaEnabled = null, string? Name = null);
 
 public sealed record UserDto(Guid Id, string? Email, string? Phone, UserStatus Status, bool MfaEnabled, bool IsDeleted);
 

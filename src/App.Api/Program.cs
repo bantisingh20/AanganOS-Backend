@@ -1,4 +1,5 @@
 using App.Api.Endpoints;
+using App.Api.Gate;
 using App.Api.Middleware;
 using App.Api.Observability;
 using App.Api.Security;
@@ -76,6 +77,8 @@ builder.Services.AddCors(options =>
         }
     });
 });
+
+builder.Services.AddHostedService<ApiWalkInExpiryService>();
 
 var app = builder.Build();
 

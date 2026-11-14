@@ -35,7 +35,11 @@ public sealed class AdminUserService(
 
         var search = parameters.Search?.Trim();
 
-        var usersQuery = db.Users.AsNoTracking().Where(u => adminUserIds.Contains(u.Id));
+        var usersQuery = db.Users.AsNoTracking()
+                .Where(u => !db.Residents.Any(r => r.UserId == u.Id))
+                .Where(u => adminUserIds.Contains(u.Id));
+                //.ToListAsync();
+                // db.Users.AsNoTracking().Where(u => adminUserIds.Contains(u.Id));
         if (!string.IsNullOrEmpty(search))
         {
             usersQuery = usersQuery.Where(u =>
@@ -170,10 +174,10 @@ public sealed class AdminUserService(
         var roleName = request.RoleName?.Trim() ?? string.Empty;
         var role = await db.Roles.FirstOrDefaultAsync(r => r.Name == roleName, cancellationToken)
             ?? throw new ValidationException("roleName", "Unknown role.");
-        if (role.Surface != RoleSurface.Admin && role.Surface != RoleSurface.Both)
-        {
-            throw new ValidationException("roleName", "Only admin roles can be assigned here.");
-        }
+        //if (role.Surface != RoleSurface.Admin && role.Surface != RoleSurface.Both)
+        //{
+        //    throw new ValidationException("roleName", "Only admin roles can be assigned here.");
+        //}
 
         if (!Enum.TryParse<UserStatus>(request.Status?.Trim(), ignoreCase: true, out var status))
         {
@@ -301,21 +305,30 @@ public sealed class AdminUserService(
             return [];
         }
 
+        if (string.Equals(roleName, "Superadmin", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
         if (string.Equals(roleName, "OrganizationAdmin", StringComparison.OrdinalIgnoreCase))
         {
             if (organizationId is not { } orgId)
             {
                 throw new ValidationException("organizationId", "An organization is required for an organization admin.");
             }
-            var ids = await db.Communities.IgnoreQueryFilters()
+            if (communityId.HasValue && communityId.Value != Guid.Empty)
+            {
+                return [communityId.Value];
+            }
+            var firstId = await db.Communities.IgnoreQueryFilters().AsNoTracking()
                 .Where(c => c.OrganizationId == orgId && !c.IsDeleted)
                 .Select(c => c.Id)
-                .ToListAsync(cancellationToken);
-            if (ids.Count == 0)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (firstId == Guid.Empty)
             {
                 throw new ValidationException("organizationId", "The organization has no communities to scope to.");
             }
-            return ids;
+            return [firstId];
         }
 
         if (communityId is not { } cid)

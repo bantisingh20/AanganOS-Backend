@@ -63,6 +63,7 @@ public static class DevDataSeeder
         await EnsureAdminRolesMenuItemAsync(db, ct);
         await EnsureBillingMenuItemsAsync(db, ct);
         await EnsureAppBillingTabItemsAsync(db, ct);
+        await EnsureNotificationTemplatesMenuItemAsync(db, ct);
 
         var hasher = sp.GetRequiredService<IPasswordHasher>();
 
@@ -314,6 +315,50 @@ public static class DevDataSeeder
         if (usersItem is not null && usersItem.Label != "Manage People")
         {
             usersItem.Label = "Manage People";
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+        private static async Task EnsureNotificationTemplatesMenuItemAsync(AppDbContext db, CancellationToken ct)
+    {
+        var id = MenuGuid("admin.notification-templates");
+        var existing = await db.MenuItems.IgnoreQueryFilters().FirstOrDefaultAsync(m => m.Id == id, ct);
+        var actions = ((int)PermissionAction.View).ToString();
+        if (existing is null)
+        {
+            db.MenuItems.Add(new MenuItem
+            {
+                Id = id,
+                ParentId = MenuGuid("admin.group.administration"),
+                Key = "admin.notification-templates",
+                Label = "Notification Templates",
+                Icon = "MailOutlined",
+                Route = "/notification-templates",
+                Surface = MenuSurface.Admin,
+                RequiredPermissionActions = actions,
+                RequiredPermissionResource = "Configuration",
+                SortOrder = 35,
+                IsActive = true,
+                ShowInSidebar = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                CreatedBy = "seed",
+                RowVersion = [],
+            });
+        }
+        else
+        {
+            existing.ParentId = MenuGuid("admin.group.administration");
+            existing.Label = "Notification Templates";
+            existing.Icon = "MailOutlined";
+            existing.Route = "/notification-templates";
+            existing.Surface = MenuSurface.Admin;
+            existing.RequiredPermissionActions = actions;
+            existing.RequiredPermissionResource = "Configuration";
+            existing.SortOrder = 35;
+            existing.IsActive = true;
+            existing.ShowInSidebar = true;
+            existing.IsDeleted = false;
         }
 
         await db.SaveChangesAsync(ct);

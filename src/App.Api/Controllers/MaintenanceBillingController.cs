@@ -38,9 +38,9 @@ public sealed class MaintenanceBillingController(IMaintenanceBillingService svc)
 
     [HttpGet("api/v1/maintenance-charges")]
     [RequirePermission(PermissionAction.View, "MaintenanceCharge")]
-    public async Task<IActionResult> ListCharges([FromQuery] Guid communityId, CancellationToken ct)
+    public async Task<IActionResult> ListCharges([FromQuery] Guid? communityId, [FromQuery] Guid? organizationId, CancellationToken ct)
     {
-        var items = await svc.ListChargesAsync(communityId, ct);
+        var items = await svc.ListChargesAsync(communityId, organizationId, ct);
         return Ok(ApiResult<IReadOnlyList<MaintenanceChargeDto>>.Ok(items, string.Empty));
     }
 
@@ -71,6 +71,7 @@ public sealed class MaintenanceBillingController(IMaintenanceBillingService svc)
         [FromQuery] string? status,
         [FromQuery] Guid? unitId,
         [FromQuery] Guid? communityId,
+        [FromQuery] Guid? organizationId,
         [FromQuery] int? periodYear,
         [FromQuery] int? periodMonth,
         [FromQuery] int? page,
@@ -84,7 +85,7 @@ public sealed class MaintenanceBillingController(IMaintenanceBillingService svc)
         AddEquals(filters, "periodYear", periodYear);
         AddEquals(filters, "periodMonth", periodMonth);
 
-        var data = await svc.ListBillsAsync(BuildParameters(page, pageSize, sort, filters), ct);
+        var data = await svc.ListBillsAsync(BuildParameters(page, pageSize, sort, filters), communityId, organizationId, ct);
         return Ok(ApiResult<PagedData<MaintenanceBillDto>>.Ok(data, string.Empty));
     }
 
@@ -114,18 +115,18 @@ public sealed class MaintenanceBillingController(IMaintenanceBillingService svc)
 
     [HttpGet("api/v1/maintenance-bills/collection-summary")]
     [RequirePermission(PermissionAction.View, "MaintenanceBill")]
-    public async Task<IActionResult> CollectionSummary([FromQuery] Guid? communityId, CancellationToken ct)
+    public async Task<IActionResult> CollectionSummary([FromQuery] Guid? communityId, [FromQuery] Guid? organizationId, CancellationToken ct)
     {
-        var dto = await svc.GetCollectionSummaryAsync(communityId, ct);
+        var dto = await svc.GetCollectionSummaryAsync(communityId, organizationId, ct);
         return Ok(ApiResult<MaintenanceCollectionSummaryDto>.Ok(dto, string.Empty));
     }
 
     // --- Expenses ---
     [HttpGet("api/v1/maintenance-expenses")]
     [RequirePermission(PermissionAction.View, "MaintenanceBill")]
-    public async Task<IActionResult> ListExpenses([FromQuery] Guid communityId, CancellationToken ct)
+    public async Task<IActionResult> ListExpenses([FromQuery] Guid? communityId, [FromQuery] Guid? organizationId, CancellationToken ct)
     {
-        var items = await svc.ListExpensesAsync(communityId, ct);
+        var items = await svc.ListExpensesAsync(communityId, organizationId, ct);
         return Ok(ApiResult<IReadOnlyList<MaintenanceExpenseDto>>.Ok(items, string.Empty));
     }
 
@@ -217,9 +218,9 @@ public sealed class MaintenanceBillingController(IMaintenanceBillingService svc)
 
     [HttpGet("api/v1/maintenance-payments/pending")]
     [RequirePermission(PermissionAction.Approve, "MaintenancePayment")]
-    public async Task<IActionResult> ListPending([FromQuery] Guid communityId, CancellationToken ct)
+    public async Task<IActionResult> ListPending([FromQuery] Guid? communityId, [FromQuery] Guid? organizationId, CancellationToken ct)
     {
-        var items = await svc.ListPendingPaymentsAsync(communityId, ct);
+        var items = await svc.ListPendingPaymentsAsync(communityId, organizationId, ct);
         return Ok(ApiResult<IReadOnlyList<PendingPaymentDto>>.Ok(items, string.Empty));
     }
 

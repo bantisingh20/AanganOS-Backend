@@ -184,6 +184,7 @@ public static class DependencyInjection
             .Bind(configuration.GetSection(FileStorageOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        services.AddSingleton<IImageCompressionService, ImageCompressionService>();
         services.AddSingleton<IFileBlobStore, LocalFileBlobStore>();
         services.AddScoped<IFileService, FileService>();
 
@@ -259,7 +260,13 @@ public static class DependencyInjection
             {
                 var dbOptions = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;
                 options.UseSqlServer(dbOptions.ConnectionString, sql =>
-                    sql.CommandTimeout(dbOptions.CommandTimeoutSeconds));
+                {
+                    sql.CommandTimeout(dbOptions.CommandTimeoutSeconds);
+                    sql.EnableRetryOnFailure(
+                        maxRetryCount: 5,
+                        maxRetryDelay: TimeSpan.FromSeconds(10),
+                        errorNumbersToAdd: null);
+                });
             }
 
             options.AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());

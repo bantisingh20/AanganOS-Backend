@@ -77,6 +77,7 @@ public sealed class UserService(AppDbContext db, IAuditService audit, IPageSizeP
 
         if (request.Email is not null) user.Email = Normalize(request.Email);
         if (request.Phone is not null) user.Phone = Normalize(request.Phone);
+        if (request.Name is not null) user.Name = request.Name.Trim();
         if (request.Status is not null) user.Status = request.Status.Value;
         if (request.MfaEnabled is not null) user.MfaEnabled = request.MfaEnabled.Value;
 

@@ -30,7 +30,8 @@ public sealed class FileService(
     IFileBlobStore blobStore,
     IAuthorizationGuard authorizationGuard,
     IAuditService audit,
-    IOptions<FileStorageOptions> options)
+    IOptions<FileStorageOptions> options,
+    IImageCompressionService compressionService)
     : IFileService
 {
     private readonly FileStorageOptions _options = options.Value;
@@ -55,45 +56,82 @@ public sealed class FileService(
                 "The uploaded file exceeds the maximum allowed size.");
         }
 
-        // Persist bytes through the blob store, capping the stream at MaxSizeBytes so a stream that
-        // under-reports (or cannot report) its length still cannot exceed the limit (Req 7.3).
-        await using var capped = new SizeLimitedReadStream(request.Content, _options.MaxSizeBytes);
-        string storageKey;
+        // Automatically compress images (< 500KB - 1MB) while leaving non-images (e.g. PDFs) intact
+        Stream streamToSave = request.Content;
+        Stream? compressedStreamToDispose = null;
+        var effectiveContentType = request.ContentType;
+        var effectiveFileName = request.FileName;
+
         try
         {
-            storageKey = await blobStore.SaveAsync(capped, cancellationToken);
+            var compressionResult = await compressionService.CompressImageAsync(
+                request.Content,
+                request.ContentType,
+                request.FileName,
+                maxWidth: 1920,
+                maxHeight: 1080,
+                targetMaxSizeBytes: 500 * 1024,
+                cancellationToken: cancellationToken);
+
+            if (compressionResult.WasCompressed)
+            {
+                streamToSave = compressionResult.Stream;
+                compressedStreamToDispose = compressionResult.Stream;
+                effectiveContentType = compressionResult.ContentType;
+                if (!effectiveFileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) &&
+                    !effectiveFileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+                {
+                    effectiveFileName = Path.ChangeExtension(effectiveFileName, ".jpg");
+                }
+            }
+
+            // Persist bytes through the blob store, capping the stream at MaxSizeBytes so a stream that
+            // under-reports (or cannot report) its length still cannot exceed the limit (Req 7.3).
+            await using var capped = new SizeLimitedReadStream(streamToSave, _options.MaxSizeBytes);
+            string storageKey;
+            try
+            {
+                storageKey = await blobStore.SaveAsync(capped, cancellationToken);
+            }
+            catch (FileSizeExceededException)
+            {
+                throw new AppExceptionWithCode(ErrorCode.PayloadTooLarge,
+                    "The uploaded file exceeds the maximum allowed size.");
+            }
+
+            var stored = new StoredFile
+            {
+                CommunityId = request.CommunityId,
+                OwningResourceType = request.OwningResourceType,
+                OwningResourceId = request.OwningResourceId,
+                FileName = effectiveFileName,
+                ContentType = effectiveContentType,
+                SizeBytes = capped.BytesRead,
+                StorageKey = storageKey,
+            };
+
+            db.Set<StoredFile>().Add(stored);
+            await db.SaveChangesAsync(cancellationToken);
+
+            // Audit the upload (Req 6.1) — metadata only, never the file contents.
+            await audit.AppendAsync(
+                new AuditEntry(
+                    Action: "Upload",
+                    ResourceType: "File",
+                    ResourceId: stored.Id.ToString(),
+                    CommunityId: stored.CommunityId,
+                    Detail: $"owningResourceType={stored.OwningResourceType};owningResourceId={stored.OwningResourceId};contentType={stored.ContentType};sizeBytes={stored.SizeBytes}"),
+                cancellationToken);
+
+            return new StoredFileReference(stored.Id, stored.FileName, stored.ContentType, stored.SizeBytes);
         }
-        catch (FileSizeExceededException)
+        finally
         {
-            throw new AppExceptionWithCode(ErrorCode.PayloadTooLarge,
-                "The uploaded file exceeds the maximum allowed size.");
+            if (compressedStreamToDispose is not null)
+            {
+                await compressedStreamToDispose.DisposeAsync();
+            }
         }
-
-        var stored = new StoredFile
-        {
-            CommunityId = request.CommunityId,
-            OwningResourceType = request.OwningResourceType,
-            OwningResourceId = request.OwningResourceId,
-            FileName = request.FileName,
-            ContentType = request.ContentType,
-            SizeBytes = capped.BytesRead,
-            StorageKey = storageKey,
-        };
-
-        db.Set<StoredFile>().Add(stored);
-        await db.SaveChangesAsync(cancellationToken);
-
-        // Audit the upload (Req 6.1) — metadata only, never the file contents.
-        await audit.AppendAsync(
-            new AuditEntry(
-                Action: "Upload",
-                ResourceType: "File",
-                ResourceId: stored.Id.ToString(),
-                CommunityId: stored.CommunityId,
-                Detail: $"owningResourceType={stored.OwningResourceType};owningResourceId={stored.OwningResourceId};contentType={stored.ContentType};sizeBytes={stored.SizeBytes}"),
-            cancellationToken);
-
-        return new StoredFileReference(stored.Id, stored.FileName, stored.ContentType, stored.SizeBytes);
     }
 
     public async Task<OpenedFile> OpenAsync(Guid reference, CancellationToken cancellationToken = default)

@@ -71,7 +71,7 @@ public sealed class ConfigService(
                          (communityId != null && c.CommunityId == communityId) ||
                          (organizationId != null && c.OrganizationId == organizationId)))
             .Select(c => new { c.CommunityId, c.OrganizationId, c.Value })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(CancellationToken.None);
 
         // Community override wins; else the organization override; else the platform default; else null.
         var community = rows.FirstOrDefault(r => communityId != null && r.CommunityId == communityId);
@@ -185,7 +185,7 @@ public sealed class ConfigService(
             .OrderBy(c => c.Key).ThenBy(c => c.Scope)
             .Take(500)
             .Select(c => new ConfigRow(c.Id, c.Key, c.Scope, c.OrganizationId, c.CommunityId, c.Value))
-            .ToListAsync(cancellationToken);
+            .ToListAsync(CancellationToken.None);
     }
 
     public async Task<ConfigRow> UpsertConfigAsync(UpsertConfigRequest request, CancellationToken cancellationToken = default)
@@ -269,7 +269,7 @@ public sealed class ConfigService(
             .Where(m => m.ListKey == listKey &&
                         (m.CommunityId == null || (communityId != null && m.CommunityId == communityId)))
             .Select(m => new { m.CommunityId, m.Code, m.Label, m.SortOrder, m.IsActive })
-            .ToListAsync(cancellationToken);
+            .ToListAsync(CancellationToken.None);
 
         // Merge platform defaults with community entries; a community entry overrides the platform
         // entry with the same code (Req 8.1 fallback semantics at list-entry granularity).

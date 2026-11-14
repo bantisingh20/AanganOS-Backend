@@ -67,7 +67,7 @@ public sealed class UsersController(IUserService users) : ControllerBase
     [RequirePermission(PermissionAction.Edit, "User")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUserBody body, CancellationToken ct)
     {
-        var dto = await users.UpdateAsync(id, new UpdateUserRequest(body.Email, body.Phone, body.Status, body.MfaEnabled), ct);
+        var dto = await users.UpdateAsync(id, new UpdateUserRequest(body.Email, body.Phone, body.Status, body.MfaEnabled, body.Name), ct);
         return Ok(ApiResult<UserDto>.Ok(dto, string.Empty));
     }
 
@@ -109,5 +109,8 @@ public sealed class UsersController(IUserService users) : ControllerBase
         public UserStatus? Status { get; init; }
 
         public bool? MfaEnabled { get; init; }
+
+        [MaxLength(200)]
+        public string? Name { get; init; }
     }
 }

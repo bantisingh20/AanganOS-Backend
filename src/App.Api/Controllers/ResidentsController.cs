@@ -20,13 +20,14 @@ public sealed class ResidentsController(IResidentService residents) : Controller
     public async Task<IActionResult> Create([FromBody] CreateResidentBody body, CancellationToken ct)
     {
         var dto = await residents.CreateAsync(new CreateResidentRequest(
-            body.CommunityId,
+            body.CommunityId ?? Guid.Empty,
             body.UserId,
             body.Name!,
             body.Email,
             body.Phone,
             body.ResidentType!,
-            body.PhotoFileId), ct);
+            body.PhotoFileId,
+            body.OrganizationId), ct);
         return Ok(ApiResult<ResidentDto>.Ok(dto, string.Empty));
     }
 
@@ -253,8 +254,8 @@ public sealed class ResidentsController(IResidentService residents) : Controller
 
     public sealed class CreateResidentBody
     {
-        [Required(ErrorMessage = "communityId is required")]
-        public Guid CommunityId { get; init; }
+        public Guid? OrganizationId { get; init; }
+        public Guid? CommunityId { get; init; }
 
         public Guid? UserId { get; init; }
 
