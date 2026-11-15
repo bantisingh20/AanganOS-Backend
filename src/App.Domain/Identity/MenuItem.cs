@@ -6,6 +6,7 @@ public enum MenuSurface
 {
     App = 0,
     Admin = 1,
+    Common = 2,
 }
 
 public class MenuItem : PlatformEntity

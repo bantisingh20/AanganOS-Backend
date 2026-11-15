@@ -137,7 +137,7 @@ public sealed class MenuService(
         var isSuperAdmin = tenant.IsPlatformSuperAdmin;
 
         var surfaces = isSuperAdmin
-            ? new HashSet<MenuSurface> { MenuSurface.Admin }
+            ? new HashSet<MenuSurface> { MenuSurface.Admin, MenuSurface.Common }
             : await ResolveSurfacesAsync(userId, cancellationToken);
 
         if (surfaces.Count == 0)
@@ -208,7 +208,7 @@ public sealed class MenuService(
             join r in db.Roles.AsNoTracking() on u.RoleId!.Value equals r.Id
             select r.Surface).Distinct().ToListAsync(cancellationToken);
 
-        var surfaces = new HashSet<MenuSurface>();
+        var surfaces = new HashSet<MenuSurface> { MenuSurface.Common };
         foreach (var rs in roleSurfaces)
         {
             if (rs is RoleSurface.App or RoleSurface.Both)
