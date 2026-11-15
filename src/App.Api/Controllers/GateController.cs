@@ -33,7 +33,8 @@ public sealed class GateController(IGateService gate) : ControllerBase
             body.NumberOfPersons,
             body.WhomToMeet,
             body.VisitDateUtc,
-            body.PhotoFileId), ct);
+            body.PhotoFileId,
+            body.PhotoBase64), ct);
         return Ok(ApiResult<CreateVisitPassResult>.Ok(result, string.Empty));
     }
 
@@ -130,7 +131,8 @@ public sealed class GateController(IGateService gate) : ControllerBase
             body.IdProofNumber,
             body.Purpose,
             body.WhomToMeet,
-            body.ExpectedDurationMinutes), ct);
+            body.ExpectedDurationMinutes,
+            body.PhotoBase64), ct);
         return Ok(ApiResult<RegisterWalkInResult>.Ok(result, string.Empty));
     }
 
@@ -264,7 +266,8 @@ public sealed class GateController(IGateService gate) : ControllerBase
             body.EndDate,
             body.DailyStartMinutes,
             body.DailyEndMinutes,
-            body.PhotoFileId), ct);
+            body.PhotoFileId,
+            body.PhotoBase64), ct);
         return Ok(ApiResult<RecurringVisitorDto>.Ok(dto, string.Empty));
     }
 
@@ -383,6 +386,8 @@ public sealed class GateController(IGateService gate) : ControllerBase
         public DateTime? VisitDateUtc { get; init; }
 
         public Guid? PhotoFileId { get; init; }
+
+        public string? PhotoBase64 { get; init; }
     }
 
     public sealed class VerifyVisitPassBody
@@ -463,6 +468,8 @@ public sealed class GateController(IGateService gate) : ControllerBase
 
         [Range(1, 10080, ErrorMessage = "expectedDurationMinutes must be between 1 and 10080")]
         public int? ExpectedDurationMinutes { get; init; }
+
+        public string? PhotoBase64 { get; init; }
     }
 
     public sealed class ApproveWalkInBody
@@ -544,6 +551,8 @@ public sealed class GateController(IGateService gate) : ControllerBase
         public int? DailyEndMinutes { get; init; }
 
         public Guid? PhotoFileId { get; init; }
+
+        public string? PhotoBase64 { get; init; }
     }
 
     public sealed class ExtendRecurringVisitorBody

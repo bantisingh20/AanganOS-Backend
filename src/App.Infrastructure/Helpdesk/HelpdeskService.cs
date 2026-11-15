@@ -711,12 +711,12 @@ public sealed class HelpdeskService(
     /// community predicate on the UserRole scope is explicit. One projecting existence query, no N+1.
     /// </summary>
     private Task<bool> IsEligibleAssigneeAsync(Guid userId, Guid communityId, CancellationToken cancellationToken) =>
-        (from ur in db.UserRoles.AsNoTracking()
-         where ur.UserId == userId && (ur.CommunityId == communityId || ur.CommunityId == null)
-         join rp in db.RolePermissions.AsNoTracking() on ur.RoleId equals rp.RoleId
+        (from u in db.Users.AsNoTracking()
+         where u.Id == userId && (u.CommunityId == communityId || u.CommunityId == null) && u.RoleId != null
+         join rp in db.RolePermissions.AsNoTracking() on u.RoleId!.Value equals rp.RoleId
          join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
          where p.ResourceType == "Ticket" && p.Action == PermissionAction.Edit
-         select ur.UserId)
+         select u.Id)
         .AnyAsync(cancellationToken);
 
     /// <summary>
@@ -816,12 +816,12 @@ public sealed class HelpdeskService(
     private async Task EnqueueEscalationAsync(DomainTicket ticket, double hoursOverdue, CancellationToken cancellationToken)
     {
         var responderUserIds = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where ur.CommunityId == ticket.CommunityId || ur.CommunityId == null
-            join rp in db.RolePermissions.AsNoTracking() on ur.RoleId equals rp.RoleId
+            from u in db.Users.AsNoTracking()
+            where (u.CommunityId == ticket.CommunityId || u.CommunityId == null) && u.RoleId != null
+            join rp in db.RolePermissions.AsNoTracking() on u.RoleId!.Value equals rp.RoleId
             join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
             where p.ResourceType == "Ticket" && p.Action == PermissionAction.Edit
-            select ur.UserId)
+            select u.Id)
             .Distinct()
             .ToListAsync(cancellationToken);
 
@@ -959,3 +959,4 @@ public sealed class HelpdeskService(
     private static TicketCommentDto ToDto(DomainTicketComment c) =>
         new(c.Id, c.CommunityId, c.TicketId, c.Body, c.CreatedBy, c.CreatedAtUtc);
 }
+

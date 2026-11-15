@@ -27,19 +27,13 @@ public sealed class AdminUserService(
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        var adminUserIds = await (
-            from ur in db.UserRoles.AsNoTracking()
-            join r in db.Roles.AsNoTracking() on ur.RoleId equals r.Id
-            where r.Surface == RoleSurface.Admin || r.Surface == RoleSurface.Both
-            select ur.UserId).Distinct().ToListAsync(cancellationToken);
-
         var search = parameters.Search?.Trim();
 
         var usersQuery = db.Users.AsNoTracking()
-                .Where(u => !db.Residents.Any(r => r.UserId == u.Id))
-                .Where(u => adminUserIds.Contains(u.Id));
-                //.ToListAsync();
-                // db.Users.AsNoTracking().Where(u => adminUserIds.Contains(u.Id));
+            .Include(u => u.Role)
+            .Where(u => !db.Residents.Any(r => r.UserId == u.Id))
+            .Where(u => u.RoleId != null && (u.Role!.Surface == RoleSurface.Admin || u.Role.Surface == RoleSurface.Both));
+
         if (!string.IsNullOrEmpty(search))
         {
             usersQuery = usersQuery.Where(u =>
@@ -58,25 +52,22 @@ public sealed class AdminUserService(
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
-        var pageUserIds = users.Select(u => u.Id).ToList();
-
-        var assignments = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where pageUserIds.Contains(ur.UserId)
-            join r in db.Roles.AsNoTracking() on ur.RoleId equals r.Id
-            select new { ur.UserId, ur.RoleId, r.Name, ur.CommunityId }).ToListAsync(cancellationToken);
-
         var items = users.Select(u =>
         {
-            var mine = assignments.Where(a => a.UserId == u.Id).ToList();
+            var roleName = u.Role?.Name ?? string.Empty;
+            var roleNames = string.IsNullOrEmpty(roleName) ? new List<string>() : new List<string> { roleName };
+            var assignments = u.RoleId.HasValue && !string.IsNullOrEmpty(roleName)
+                ? new List<AdminUserRoleScopeDto> { new(u.RoleId.Value, roleName, u.CommunityId) }
+                : new List<AdminUserRoleScopeDto>();
+
             return new AdminUserDto(
                 u.Id,
                 u.Name,
                 u.Email,
                 u.Phone,
                 u.Status.ToString(),
-                mine.Select(a => a.Name).Distinct().ToList(),
-                mine.Select(a => new AdminUserRoleScopeDto(a.RoleId, a.Name, a.CommunityId)).ToList());
+                roleNames,
+                assignments);
         }).ToList();
 
         return new PagedData<AdminUserDto>
@@ -111,6 +102,7 @@ public sealed class AdminUserService(
         }
 
         var communityIds = await ResolveScopeCommunityIdsAsync(roleName, request.OrganizationId, request.CommunityId, cancellationToken);
+        var targetCommunityId = communityIds.Count > 0 ? communityIds[0] : (Guid?)null;
 
         var isEmail = identifier.Contains('@', StringComparison.Ordinal);
         var user = new User
@@ -120,30 +112,18 @@ public sealed class AdminUserService(
             Phone = isEmail ? null : identifier,
             PasswordHash = passwordHasher.Hash(request.Password),
             Status = UserStatus.Active,
+            RoleId = role.Id,
+            CommunityId = targetCommunityId,
+            OrganizationId = request.OrganizationId,
         };
         db.Users.Add(user);
 
-        if (communityIds.Count == 0)
-        {
-            db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id, CommunityId = null });
-        }
-        else
-        {
-            foreach (var cid in communityIds.Distinct())
-            {
-                db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id, CommunityId = cid });
-            }
-        }
-
-        // A community/organization admin is also a person in the society: create a Resident row
-        // (linked to this user) in each scoped community so they appear with units and residents.me()
-        // resolves for them. Marked verified — an admin is pre-trusted, not subject to KYC approval.
-        // Platform admins (PowerUser, no community scope) get no resident row.
-        foreach (var cid in communityIds.Distinct())
+        if (targetCommunityId.HasValue)
         {
             db.Set<App.Domain.Residents.Resident>().Add(new App.Domain.Residents.Resident
             {
-                CommunityId = cid,
+                CommunityId = targetCommunityId.Value,
+                OrganizationId = request.OrganizationId,
                 UserId = user.Id,
                 Name = user.Name ?? identifier,
                 Email = user.Email,
@@ -157,9 +137,10 @@ public sealed class AdminUserService(
             () => db.SaveChangesAsync(cancellationToken),
             "That email or phone is already in use by another login.");
 
-        var assignments = communityIds.Count == 0
-            ? new List<AdminUserRoleScopeDto> { new(role.Id, role.Name, null) }
-            : communityIds.Distinct().Select(cid => new AdminUserRoleScopeDto(role.Id, role.Name, cid)).ToList();
+        var assignments = new List<AdminUserRoleScopeDto>
+        {
+            new(role.Id, role.Name, targetCommunityId)
+        };
 
         return new AdminUserDto(user.Id, user.Name, user.Email, user.Phone, user.Status.ToString(), [role.Name], assignments);
     }
@@ -174,10 +155,6 @@ public sealed class AdminUserService(
         var roleName = request.RoleName?.Trim() ?? string.Empty;
         var role = await db.Roles.FirstOrDefaultAsync(r => r.Name == roleName, cancellationToken)
             ?? throw new ValidationException("roleName", "Unknown role.");
-        //if (role.Surface != RoleSurface.Admin && role.Surface != RoleSurface.Both)
-        //{
-        //    throw new ValidationException("roleName", "Only admin roles can be assigned here.");
-        //}
 
         if (!Enum.TryParse<UserStatus>(request.Status?.Trim(), ignoreCase: true, out var status))
         {
@@ -185,63 +162,36 @@ public sealed class AdminUserService(
         }
 
         var communityIds = await ResolveScopeCommunityIdsAsync(roleName, request.OrganizationId, request.CommunityId, cancellationToken);
+        var targetCommunityId = communityIds.Count > 0 ? communityIds[0] : (Guid?)null;
 
         var previousStatus = user.Status;
         user.Name = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim();
         user.Status = status;
+        user.RoleId = role.Id;
+        user.CommunityId = targetCommunityId;
+        if (request.OrganizationId.HasValue)
+        {
+            user.OrganizationId = request.OrganizationId;
+        }
+
         if (!string.IsNullOrEmpty(request.Password))
         {
             user.PasswordHash = passwordHasher.Hash(request.Password);
-        }
-
-        var desiredScopes = communityIds.Count == 0
-            ? new List<Guid?> { null }
-            : communityIds.Distinct().Select(cid => (Guid?)cid).ToList();
-
-        var existing = await db.UserRoles
-            .IgnoreQueryFilters()
-            .Where(ur => ur.UserId == userId)
-            .ToListAsync(cancellationToken);
-
-        foreach (var ur in existing.Where(ur => !ur.IsDeleted))
-        {
-            var stillWanted = ur.RoleId == role.Id && desiredScopes.Contains(ur.CommunityId);
-            if (!stillWanted)
-            {
-                ur.IsDeleted = true;
-            }
-        }
-
-        foreach (var cid in desiredScopes)
-        {
-            var revived = existing.FirstOrDefault(ur => ur.IsDeleted && ur.RoleId == role.Id && ur.CommunityId == cid);
-            if (revived is not null)
-            {
-                revived.IsDeleted = false;
-                continue;
-            }
-            var alreadyLive = existing.Any(ur => !ur.IsDeleted && ur.RoleId == role.Id && ur.CommunityId == cid);
-            if (!alreadyLive)
-            {
-                db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id, CommunityId = cid });
-            }
         }
 
         await UniqueConstraintGuard.SaveTranslatingUniqueViolationAsync(
             () => db.SaveChangesAsync(cancellationToken),
             "That role scope is already assigned.");
 
-        // Approval email: a PowerUser flipping a society admin from Suspended to Active IS the
-        // approval gate. Send it after the commit, non-blocking and failure-tolerant — a mail hiccup
-        // must never roll back the activation (steering: fail safe, not fatal).
         if (previousStatus == UserStatus.Suspended && status == UserStatus.Active)
         {
             await SendActivationNotificationAsync(user, communityIds, cancellationToken);
         }
 
-        var assignments = communityIds.Count == 0
-            ? new List<AdminUserRoleScopeDto> { new(role.Id, role.Name, null) }
-            : communityIds.Distinct().Select(cid => new AdminUserRoleScopeDto(role.Id, role.Name, cid)).ToList();
+        var assignments = new List<AdminUserRoleScopeDto>
+        {
+            new(role.Id, role.Name, targetCommunityId)
+        };
 
         return new AdminUserDto(user.Id, user.Name, user.Email, user.Phone, user.Status.ToString(), [role.Name], assignments);
     }
@@ -253,7 +203,7 @@ public sealed class AdminUserService(
             var scopeCommunityId = communityIds.Count > 0 ? communityIds[0] : (Guid?)null;
             if (scopeCommunityId is not { } communityId)
             {
-                return; // platform admin (no community) — no society activation email applies.
+                return;
             }
 
             var societyName = await db.Communities.AsNoTracking().IgnoreQueryFilters()
@@ -268,9 +218,6 @@ public sealed class AdminUserService(
                 ["loginId"] = user.Email ?? user.Phone ?? "the email/phone you registered with",
             };
 
-            // Editable, templated notification (admin.society.activated) — subject/body + placeholders
-            // live as data, rendered + wrapped in the shared email layout. EnqueueAsync is Add-only
-            // (transactional outbox); the activation already committed, so flush the queued rows here.
             await notifications.EnqueueAsync(
                 new NotificationRequest(NotificationTemplateKeys.SocietyActivated, user.Id, communityId, placeholders),
                 cancellationToken);
@@ -287,13 +234,7 @@ public sealed class AdminUserService(
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken)
             ?? throw new NotFoundException("User not found.");
 
-        var roleRows = await db.UserRoles.Where(ur => ur.UserId == userId).ToListAsync(cancellationToken);
-        foreach (var ur in roleRows)
-        {
-            ur.IsDeleted = true;
-        }
         user.IsDeleted = true;
-
         await db.SaveChangesAsync(cancellationToken);
     }
 

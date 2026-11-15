@@ -754,12 +754,12 @@ public sealed class ParcelService(
         // Parcel. Permission/Role/UserRole are platform-scoped (no tenant filter), so the community
         // predicate on the UserRole scope is explicit — the same audience resolution SecurityOps uses.
         var adminUserIds = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where ur.CommunityId == parcel.CommunityId || ur.CommunityId == null
-            join rp in db.RolePermissions.AsNoTracking() on ur.RoleId equals rp.RoleId
+            from u in db.Users.AsNoTracking()
+            where (u.CommunityId == parcel.CommunityId || u.CommunityId == null) && u.RoleId != null
+            join rp in db.RolePermissions.AsNoTracking() on u.RoleId!.Value equals rp.RoleId
             join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
             where p.ResourceType == "Parcel" && p.Action == PermissionAction.View
-            select ur.UserId)
+            select u.Id)
             .Distinct()
             .ToListAsync(cancellationToken);
 
@@ -1133,3 +1133,4 @@ public sealed class ParcelService(
         new(e.Id, e.CommunityId, e.ParcelId, e.EventType, e.FromStatus, e.ToStatus,
             e.ActingUserId, e.Detail, e.OccurredAtUtc);
 }
+

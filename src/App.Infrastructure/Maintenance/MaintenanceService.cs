@@ -1557,12 +1557,12 @@ public sealed class MaintenanceService(
     /// name (mirrors the ticket-assignee resolution). One projecting existence query, no N+1.
     /// </summary>
     private Task<bool> IsEligibleAssigneeAsync(Guid userId, Guid communityId, CancellationToken cancellationToken) =>
-        (from ur in db.UserRoles.AsNoTracking()
-         where ur.UserId == userId && (ur.CommunityId == communityId || ur.CommunityId == null)
-         join rp in db.RolePermissions.AsNoTracking() on ur.RoleId equals rp.RoleId
+        (from u in db.Users.AsNoTracking()
+         where u.Id == userId && (u.CommunityId == communityId || u.CommunityId == null) && u.RoleId != null
+         join rp in db.RolePermissions.AsNoTracking() on u.RoleId!.Value equals rp.RoleId
          join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
          where p.ResourceType == "WorkOrder" && p.Action == PermissionAction.Edit
-         select ur.UserId)
+         select u.Id)
         .AnyAsync(cancellationToken);
 
     /// <summary>
@@ -1750,3 +1750,4 @@ public sealed class MaintenanceService(
             a.Status, a.QrToken, a.UnitId, a.WarrantyProvider, a.WarrantyReference,
             a.WarrantyStartUtc, a.WarrantyEndUtc, a.InstalledOnUtc, a.Notes, a.CreatedAtUtc);
 }
+

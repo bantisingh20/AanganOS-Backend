@@ -12,6 +12,7 @@ public abstract class TenantOwnedEntity : ITenantOwned, IAuditable, ISoftDeletab
     public Guid Id { get; set; } = Guid.NewGuid();
 
     public Guid CommunityId { get; set; }
+    //public Guid OrganizationId { get; set; }
 
     // Soft delete (Req 3.7)
     public bool IsDeleted { get; set; }

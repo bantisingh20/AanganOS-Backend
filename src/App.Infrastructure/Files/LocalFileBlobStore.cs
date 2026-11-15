@@ -100,7 +100,7 @@ public sealed class LocalFileBlobStore : IFileBlobStore
             ? _root
             : _root + Path.DirectorySeparatorChar;
 
-        if (!fullPath.StartsWith(rootWithSeparator, StringComparison.Ordinal))
+        if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("Resolved path escapes the configured storage root.");
         }

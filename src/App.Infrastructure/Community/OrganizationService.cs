@@ -1,27 +1,30 @@
 using App.Application.Audit;
 using App.Application.Community;
+using App.Application.Config;
 using App.Application.Exceptions;
+using App.Application.Notifications;
 using App.Application.Querying;
 using App.Contracts.Envelope;
 using App.Domain.Community;
+using App.Domain.Identity;
 using App.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace App.Infrastructure.Community;
 
-/// <summary>
-/// EF-backed <see cref="IOrganizationService"/> (Req 12.1). Create/edit/soft-delete/get/list the
-/// platform-scoped organization. Mutations are audited (Req 6.1); delete archives the row (the
-/// audit interceptor converts Remove into a soft delete) and it stays retrievable via
-/// <c>IgnoreQueryFilters</c> for audit. The list goes through the shared pagination infra and only
-/// the allow-listed fields may be sorted/searched (no arbitrary client fields).
-/// </summary>
 public sealed class OrganizationService(
     AppDbContext db,
     IAuditService audit,
     IPageSizePolicy pageSizePolicy,
-    IAsyncQueryExecutor executor) : IOrganizationService
+    IAsyncQueryExecutor executor,
+    INotificationService notifications,
+    IConfigService config,
+    ILogger<OrganizationService> logger) : IOrganizationService
 {
+    private const string PortalUrlKey = "admin.portalUrl";
+    private const string DefaultPortalUrl = "http://localhost:5173";
+
     // Allow-list: what a client may sort/search on (steering: no arbitrary client LINQ fields).
     private static readonly ListQueryConfiguration<Organization> QueryConfig =
         new ListQueryConfiguration<Organization>()
@@ -94,8 +97,8 @@ public sealed class OrganizationService(
     }
 
     public async Task<PagedData<OrganizationDto>> ListAsync(
-   ListQueryParameters parameters,
-   CancellationToken cancellationToken = default)
+        ListQueryParameters parameters,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
@@ -110,13 +113,11 @@ public sealed class OrganizationService(
         var data = await (
             from c in db.Communities.AsNoTracking().IgnoreQueryFilters()
             where orgIds.Contains(c.OrganizationId)
-            join ur in db.UserRoles.AsNoTracking().IgnoreQueryFilters()
-                on c.Id equals ur.CommunityId
-            where !ur.IsDeleted
             join u in db.Users.AsNoTracking().IgnoreQueryFilters()
-                on ur.UserId equals u.Id
+                on c.Id equals u.CommunityId
             where !u.IsDeleted &&
-                  u.Status == App.Domain.Identity.UserStatus.Active
+                  u.Status == App.Domain.Identity.UserStatus.Active &&
+                  u.RoleId != null
             group c by c.OrganizationId into g
             select new
             {
@@ -152,25 +153,30 @@ public sealed class OrganizationService(
             .FirstOrDefaultAsync(o => o.Id == organizationId, cancellationToken)
             ?? throw new NotFoundException("Organization not found.");
 
+        string SocietyName = org.Name;
         if (org.IsDeleted)
         {
             org.IsDeleted = false;
             org.DeletedAtUtc = null;
         }
 
-        var communityIds = await db.Communities.IgnoreQueryFilters()
+        var communities = await db.Communities.IgnoreQueryFilters()
             .Where(c => c.OrganizationId == organizationId && !c.IsDeleted)
-            .Select(c => c.Id)
+            .Select(c => new { c.Id, c.Name })
             .ToListAsync(cancellationToken);
+
+        var communityIds = communities.Select(c => c.Id).ToList();
+        var activatedUsers = new List<User>();
 
         if (communityIds.Count > 0)
         {
             var adminUserIds = await (
-                from ur in db.UserRoles.IgnoreQueryFilters()
-                where !ur.IsDeleted && ur.CommunityId != null && communityIds.Contains(ur.CommunityId.Value)
-                join r in db.Roles on ur.RoleId equals r.Id
-                where r.Surface == App.Domain.Identity.RoleSurface.Admin || r.Surface == App.Domain.Identity.RoleSurface.Both
-                select ur.UserId).Distinct().ToListAsync(cancellationToken);
+                from u in db.Users.IgnoreQueryFilters()
+                where !u.IsDeleted && u.CommunityId != null && communityIds.Contains(u.CommunityId.Value) && u.RoleId != null
+                join r in db.Roles on u.RoleId!.Value equals r.Id
+                where r.Name == "CommunityAdmin" || r.Name == "OrganizationAdmin"
+                //where r.Surface == App.Domain.Identity.RoleSurface.Admin || r.Surface == App.Domain.Identity.RoleSurface.Both
+                select u.Id).Distinct().ToListAsync(cancellationToken);
 
             if (adminUserIds.Count > 0)
             {
@@ -181,6 +187,7 @@ public sealed class OrganizationService(
                 foreach (var user in users)
                 {
                     user.Status = App.Domain.Identity.UserStatus.Active;
+                    activatedUsers.Add(user);
                 }
             }
         }
@@ -188,7 +195,7 @@ public sealed class OrganizationService(
         // Activating the org also STARTS its subscription: a self-registered org is seeded with an
         // expired subscription (StartsAtUtc == ExpiresAtUtc == registration time) as the approval
         // gate. Without this, "expired" is still derived (ExpiresAtUtc <= now) after activation. Move
-        // the window to now → now + PlanMonths and mark it active so it reads active post-activation.
+        // the window to now -> now + PlanMonths and mark it active so it reads active post-activation.
         var subscription = await db.OrgSubscriptions.IgnoreQueryFilters()
             .Where(s => s.OrganizationId == organizationId && !s.IsDeleted)
             .OrderByDescending(s => s.StartsAtUtc)
@@ -210,7 +217,78 @@ public sealed class OrganizationService(
             new AuditEntry("Activate", "Organization", org.Id.ToString(), CommunityId: null, Detail: null),
             cancellationToken);
 
+        // Notify society admin(s) who registered or administer this organization
+        await SendActivationNotificationsAsync(org, communities.Select(c => (c.Id, c.Name)).ToList(), activatedUsers, SocietyName, cancellationToken);
+
         return ToDto(org) with { HasActiveAdmin = true };
+    }
+
+    private async Task SendActivationNotificationsAsync(
+        Organization org,
+        List<(Guid Id, string Name)> communities,
+        List<User> activatedUsers, string SocietyName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var targetUsers = new List<(User User, Guid CommunityId, string SocietyName)>();
+
+            if (activatedUsers.Count > 0)
+            {
+                foreach (var user in activatedUsers)
+                {
+                    var cid = user.CommunityId ?? Guid.Empty;
+
+                    var societyName = communities.FirstOrDefault(c => c.Id == cid).Name ?? org.Name;
+                    var effectiveCid = cid != Guid.Empty ? cid : (communities.FirstOrDefault().Id != Guid.Empty ? communities.FirstOrDefault().Id : Guid.Empty);
+                    targetUsers.Add((user, effectiveCid, societyName));
+                }
+            }
+            else if (communities.Count > 0)
+            {
+                var communityIds = communities.Select(c => c.Id).ToList();
+                var admins = await (
+                    from u in db.Users.IgnoreQueryFilters()
+                    where !u.IsDeleted && u.CommunityId != null && communityIds.Contains(u.CommunityId.Value) && u.RoleId != null
+                    join r in db.Roles on u.RoleId!.Value equals r.Id
+                    where r.Surface == App.Domain.Identity.RoleSurface.Admin || r.Surface == App.Domain.Identity.RoleSurface.Both
+                    select new { User = u, CommunityId = u.CommunityId.Value }
+                ).Distinct().ToListAsync(cancellationToken);
+
+                foreach (var item in admins)
+                {
+                    var societyName = communities.FirstOrDefault(c => c.Id == item.CommunityId).Name ?? org.Name;
+                    targetUsers.Add((item.User, item.CommunityId, societyName));
+                }
+            }
+
+            foreach (var target in targetUsers)
+            {
+                if (target.CommunityId == Guid.Empty) continue;
+
+                var portalUrl = (await config.GetStringAsync(PortalUrlKey, DefaultPortalUrl, target.CommunityId, cancellationToken)).TrimEnd('/');
+                var placeholders = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["name"] = string.IsNullOrWhiteSpace(target.User.Name) ? "there" : target.User.Name!,
+                    ["societyName"] = SocietyName,
+                    ["portalUrl"] = portalUrl,
+                    ["loginId"] = target.User.Email ?? target.User.Phone ?? "the email/phone you registered with",
+                };
+
+                await notifications.EnqueueAsync(
+                    new NotificationRequest(NotificationTemplateKeys.SocietyActivated, target.User.Id, target.CommunityId, placeholders),
+                    cancellationToken);
+            }
+
+            if (targetUsers.Count > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to queue activation notifications for organization {OrganizationId}", org.Id);
+        }
     }
 
     private static OrganizationDto ToDto(Organization o) => new(o.Id, o.Name, o.IsDeleted);
@@ -223,3 +301,4 @@ public sealed class OrganizationService(
         }
     }
 }
+

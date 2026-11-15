@@ -153,6 +153,18 @@ public sealed class NotificationService(
 
     private async Task<string> WrapInEmailLayoutAsync(string innerHtml, NotificationRequest request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(innerHtml))
+        {
+            return string.Empty;
+        }
+
+        if (innerHtml.TrimStart().StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
+            innerHtml.TrimStart().StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+        {
+            var logo = await config.GetStringAsync(EmailLogoUrlKey, DefaultEmailLogoUrl, cancellationToken: cancellationToken);
+            return innerHtml.Replace("{logoUrl}", logo);
+        }
+
         var layout = await db.Set<NotificationTemplate>().AsNoTracking()
             .Where(t => t.Key == NotificationTemplateKeys.EmailLayout && t.CommunityId == null && t.IsActive)
             .Select(t => t.EmailHtmlTemplate)

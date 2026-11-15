@@ -1160,12 +1160,12 @@ public sealed class MaintenanceBillingService(
         Guid communityId, IReadOnlyDictionary<string, string> placeholders, CancellationToken cancellationToken)
     {
         var approverUserIds = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where ur.CommunityId == communityId || ur.CommunityId == null
-            join rp in db.RolePermissions.AsNoTracking() on ur.RoleId equals rp.RoleId
+            from u in db.Users.AsNoTracking()
+            where (u.CommunityId == communityId || u.CommunityId == null) && u.RoleId != null
+            join rp in db.RolePermissions.AsNoTracking() on u.RoleId!.Value equals rp.RoleId
             join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
             where p.ResourceType == "MaintenancePayment" && p.Action == PermissionAction.Approve
-            select ur.UserId)
+            select u.Id)
             .Distinct()
             .ToListAsync(cancellationToken);
 
@@ -1302,3 +1302,4 @@ public sealed class MaintenanceBillingService(
         new(p.Id, p.CommunityId, p.MaintenanceBillId, p.UnitId ?? Guid.Empty, p.Amount, p.Method, p.Reference, p.PaidAtUtc,
             p.Status, p.SubmittedByResident, p.ApprovedAtUtc);
 }
+

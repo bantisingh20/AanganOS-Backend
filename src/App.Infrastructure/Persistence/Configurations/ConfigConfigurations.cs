@@ -1,4 +1,4 @@
-﻿using App.Application.Config;
+using App.Application.Config;
 using App.Application.Notifications;
 using App.Domain.Config;
 using App.Domain.Notifications;
@@ -1346,14 +1346,18 @@ public sealed class NotificationTemplateEntityConfiguration : IEntityTypeConfigu
         yield return Platform(
             NotificationTemplateKeys.SocietyActivated,
             "Your society \"{societyName}\" is now active",
-            "Hi {name}, good news — {societyName} has been approved and activated.\n\n" +
-            "Admin portal: {portalUrl}\n" +
-            "Sign in there with the same username and password you used when registering your society (username: {loginId}).\n\n" +
-            "To use the mobile app, register yourself as a resident from the app's \"Create account\" screen.\n\n" +
-            "Welcome aboard.",
+            "Hi {name}, good news! {societyName} has been approved and activated. Please open the app to continue.",
             NotificationCategories.Account,
             NotificationCategoryKind.Mandatory,
-            NotificationChannel.Email | NotificationChannel.Push);
+            NotificationChannel.Push | NotificationChannel.Sms | NotificationChannel.Email | NotificationChannel.WhatsApp);
+
+        yield return Platform(
+            NotificationTemplateKeys.SubscriptionUpdated,
+            "Subscription renewed for \"{societyName}\"",
+            "Hi {name}, the subscription for {societyName} has been renewed ({planMonths} months, valid until {expiresAt}). Please open the app to continue.",
+            NotificationCategories.Account,
+            NotificationCategoryKind.Mandatory,
+            NotificationChannel.Push | NotificationChannel.Sms | NotificationChannel.Email | NotificationChannel.WhatsApp);
 
         // Resident self-onboarding â€” notify the community admins a request needs review.
         yield return Platform(

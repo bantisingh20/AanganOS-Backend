@@ -3,6 +3,7 @@ using App.Application.Audit;
 using App.Application.Config;
 using App.Application.Exceptions;
 using App.Application.Messaging;
+using App.Application.Notifications;
 using App.Application.Subscription;
 using App.Domain.Subscription;
 using App.Infrastructure.Persistence;
@@ -18,11 +19,14 @@ public sealed class SubscriptionService(
     ITenantContext tenant,
     IClock clock,
     IMessageSender messageSender,
+    INotificationService notifications,
     ILogger<SubscriptionService> logger) : ISubscriptionService
 {
     private const string ResourceType = "Subscription";
     private const string ApproverEmailsKey = "subscription.approverEmails";
     private const string WarningDaysKey = "subscription.warningDays";
+    private const string PortalUrlKey = "admin.portalUrl";
+    private const string DefaultPortalUrl = "http://localhost:5173";
     private const int DefaultWarningDays = 20;
 
     public async Task<SubscriptionDto> GetMineAsync(CancellationToken cancellationToken = default)
@@ -49,6 +53,8 @@ public sealed class SubscriptionService(
             new AuditEntry("SetExpiry", ResourceType, organizationId.ToString(), null,
                 Detail: $"planMonths={planMonths};expiresAtUtc={expiresAtUtc:o}"),
             cancellationToken);
+
+        await SendSubscriptionUpdatedNotificationAsync(organizationId, planMonths, expiresAtUtc, cancellationToken);
 
         return await BuildDtoAsync(organizationId, cancellationToken);
     }
@@ -144,6 +150,8 @@ public sealed class SubscriptionService(
                 Detail: $"organizationId={request.OrganizationId};planMonths={planMonths};expiresAtUtc={expiresAtUtc:o}"),
             cancellationToken);
 
+        await SendSubscriptionUpdatedNotificationAsync(request.OrganizationId, planMonths, expiresAtUtc, cancellationToken);
+
         return await BuildDtoAsync(request.OrganizationId, cancellationToken);
     }
 
@@ -183,6 +191,63 @@ public sealed class SubscriptionService(
             existing.StartsAtUtc = startsAtUtc;
             existing.ExpiresAtUtc = expiresAtUtc;
             existing.Status = status;
+        }
+    }
+
+    private async Task SendSubscriptionUpdatedNotificationAsync(
+        Guid organizationId,
+        int planMonths,
+        DateTime expiresAtUtc,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var org = await db.Organizations.AsNoTracking().IgnoreQueryFilters()
+                .FirstOrDefaultAsync(o => o.Id == organizationId, cancellationToken);
+            if (org is null) return;
+
+            var communities = await db.Communities.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.OrganizationId == organizationId && !c.IsDeleted)
+                .Select(c => new { c.Id, c.Name })
+                .ToListAsync(cancellationToken);
+
+            var communityIds = communities.Select(c => c.Id).ToList();
+            if (communityIds.Count == 0) return;
+
+            var adminUsers = await (
+                from u in db.Users.AsNoTracking().IgnoreQueryFilters()
+                where !u.IsDeleted && u.CommunityId != null && communityIds.Contains(u.CommunityId.Value) && u.RoleId != null
+                join r in db.Roles on u.RoleId!.Value equals r.Id
+                where r.Surface == App.Domain.Identity.RoleSurface.Admin || r.Surface == App.Domain.Identity.RoleSurface.Both
+                select new { u.Id, u.Name, u.Email, u.Phone, CommunityId = u.CommunityId.Value }
+            ).Distinct().ToListAsync(cancellationToken);
+
+            if (adminUsers.Count == 0) return;
+
+            foreach (var admin in adminUsers)
+            {
+                var communityName = communities.FirstOrDefault(c => c.Id == admin.CommunityId)?.Name ?? org.Name;
+                var portalUrl = (await config.GetStringAsync(PortalUrlKey, DefaultPortalUrl, admin.CommunityId, cancellationToken)).TrimEnd('/');
+
+                var placeholders = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["name"] = string.IsNullOrWhiteSpace(admin.Name) ? "there" : admin.Name,
+                    ["societyName"] = communityName,
+                    ["planMonths"] = planMonths.ToString(),
+                    ["expiresAt"] = expiresAtUtc.ToString("dd MMM yyyy"),
+                    ["portalUrl"] = portalUrl,
+                };
+
+                await notifications.EnqueueAsync(
+                    new NotificationRequest(NotificationTemplateKeys.SubscriptionUpdated, admin.Id, admin.CommunityId, placeholders),
+                    cancellationToken);
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to queue subscription updated notification for organization {OrganizationId}", organizationId);
         }
     }
 
@@ -286,3 +351,4 @@ public sealed class SubscriptionService(
             .FirstOrDefaultAsync(cancellationToken);
     }
 }
+

@@ -111,20 +111,17 @@ public sealed class OnboardingService(
 
         // 3) The admin user credential (password hashed here; the service stores the hash only).
         var user = await users.CreateAsync(
-            new CreateUserRequest(email, phone, passwordHasher.Hash(request.AdminPassword)), cancellationToken);
+            new CreateUserRequest(email, phone, passwordHasher.Hash(request.AdminPassword), Name: adminName), cancellationToken);
 
-        // 4) Assign CommunityAdmin SCOPED to EVERY wing community → once ACTIVATED the society admin's
-        //    JWT carries all their wings and the global tenant filter isolates them to those.
-        foreach (var c in createdCommunities)
-        {
-            await userRoles.AssignAsync(user.Id, roleId, c.Id, cancellationToken);
-        }
+        // 4) Assign CommunityAdmin SCOPED ONLY to the default first community.
+        //    Each user has rights to only one community.
+        await userRoles.AssignAsync(user.Id, roleId, firstCommunity.Id, cancellationToken);
 
         // 4b) Create a Resident row for the society admin, linked to their user id, in the first wing,
         //     and associate them to a unit there (if generated). This makes residents.me() resolve for
         //     the admin and surfaces them with a unit (they are a real person in the society, not just
         //     a login). ResidentType "owner" (no admin-specific master code exists).
-        await CreateAdminResidentAsync(sp, firstCommunity.Id, user.Id, adminName, email, phone, cancellationToken);
+        await CreateAdminResidentAsync(sp, firstCommunity.Id, user.Id, org.Id, adminName, email, phone, cancellationToken);
 
         var planMonths = OrgSubscriptionPlans.IsValid(request.PlanMonths) ? request.PlanMonths : 12;
         var provisionedAtUtc = DateTime.UtcNow;
@@ -183,16 +180,14 @@ public sealed class OnboardingService(
     }
 
     private static async Task CreateAdminResidentAsync(
-        IServiceProvider sp, Guid communityId, Guid userId, string name, string? email, string? phone, CancellationToken cancellationToken)
+        IServiceProvider sp, Guid communityId, Guid userId, Guid organizationId, string name, string? email, string? phone, CancellationToken cancellationToken)
     {
         var db = sp.GetRequiredService<AppDbContext>();
 
-        // Direct insert (not via IResidentService) so the admin resident is created verified and
-        // linked to the user id, consistent with AdminUserService. An admin is pre-trusted, not a
-        // KYC-pending resident.
         var resident = new App.Domain.Residents.Resident
         {
             CommunityId = communityId,
+            OrganizationId = organizationId,
             UserId = userId,
             Name = name,
             Email = email,
@@ -271,3 +266,4 @@ public sealed class OnboardingService(
         }
     }
 }
+

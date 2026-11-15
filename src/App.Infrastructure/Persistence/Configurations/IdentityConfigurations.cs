@@ -555,64 +555,24 @@ public sealed class UserEntityConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.PasswordHash).HasMaxLength(512);
         builder.Property(u => u.Status).HasConversion<int>();
 
-        // One ACTIVE account per email, ignoring users with no email and soft-deleted users
-        // (filtered unique index). A soft-deleted user frees their email for reuse â€” only live rows
-        // compete for uniqueness.
+        builder.HasOne(u => u.Role)
+            .WithMany()
+            .HasForeignKey(u => u.RoleId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(u => u.Organization)
+            .WithMany()
+            .HasForeignKey(u => u.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasIndex(u => u.Email)
             .IsUnique()
             .HasFilter("[Email] IS NOT NULL AND [IsDeleted] = 0")
             .HasDatabaseName("UX_User_Email");
 
-        // One ACTIVE account per phone, ignoring users with no phone and soft-deleted users. A
-        // soft-deleted user frees their phone for reuse (the phone is the login identifier).
         builder.HasIndex(u => u.Phone)
             .IsUnique()
             .HasFilter("[Phone] IS NOT NULL AND [IsDeleted] = 0")
             .HasDatabaseName("UX_User_Phone");
-    }
-}
-
-/// <summary>
-/// Maps <see cref="UserRole"/>: Unique(UserId, RoleId, CommunityId) (Req 3.3). Because
-/// <c>CommunityId</c> is nullable, uniqueness is split into two <b>filtered</b> unique indexes â€”
-/// one for platform-scoped assignments (unique on <c>(UserId, RoleId)</c> where
-/// <c>CommunityId IS NULL</c>) and one for community-scoped assignments (unique on
-/// <c>(UserId, RoleId, CommunityId)</c> where <c>CommunityId IS NOT NULL</c>) â€” so a duplicate
-/// assignment is rejected at the DB level and surfaces as a conflict (concurrency-safe, Req 3.3).
-///
-/// <para>The <c>(UserId)</c> index serves the effective-permissions query (Task 5.3) which starts
-/// from the acting user and joins through their assignments.</para>
-/// </summary>
-public sealed class UserRoleEntityConfiguration : IEntityTypeConfiguration<UserRole>
-{
-    public void Configure(EntityTypeBuilder<UserRole> builder)
-    {
-        builder.ToTable("UserRoles");
-
-        builder.HasOne(ur => ur.User)
-            .WithMany()
-            .HasForeignKey(ur => ur.UserId)
-            .OnDelete(DeleteBehavior.Cascade);
-
-        builder.HasOne(ur => ur.Role)
-            .WithMany()
-            .HasForeignKey(ur => ur.RoleId)
-            .OnDelete(DeleteBehavior.Restrict);
-
-        // One platform assignment per (user, role).
-        builder.HasIndex(ur => new { ur.UserId, ur.RoleId })
-            .IsUnique()
-            .HasFilter("[CommunityId] IS NULL")
-            .HasDatabaseName("UX_UserRole_Platform_User_Role");
-
-        // One community assignment per (user, role, community).
-        builder.HasIndex(ur => new { ur.UserId, ur.RoleId, ur.CommunityId })
-            .IsUnique()
-            .HasFilter("[CommunityId] IS NOT NULL")
-            .HasDatabaseName("UX_UserRole_Community_User_Role");
-
-        // Primary traversal: a user's assignments (effective-permissions query, claims issuance).
-        builder.HasIndex(ur => ur.UserId)
-            .HasDatabaseName("IX_UserRole_UserId");
     }
 }

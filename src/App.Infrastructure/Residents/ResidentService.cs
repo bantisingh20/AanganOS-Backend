@@ -79,9 +79,14 @@ public sealed class ResidentService(
 
        
         var createdByApprover = await authorizationGuard.HasPermissionAsync(PermissionAction.Approve, "Resident", cancellationToken);
+        var orgId = await db.Communities.IgnoreQueryFilters()
+            .Where(c => c.Id == communityId)
+            .Select(c => (Guid?)c.OrganizationId)
+            .FirstOrDefaultAsync(cancellationToken);
 
         var resident = new Resident
         {
+            OrganizationId = orgId,
             CommunityId = communityId,
             UserId = request.UserId,
             Name = request.Name.Trim(),
@@ -231,18 +236,14 @@ public sealed class ResidentService(
 
         var rolesById = userIds.Count == 0
             ? new Dictionary<Guid, List<string>>()
-            : await (
-                from ur in db.UserRoles.AsNoTracking()
-                where userIds.Contains(ur.UserId) && !ur.IsDeleted
-                join ro in db.Roles.AsNoTracking() on ur.RoleId equals ro.Id
-                where !ro.IsDeleted
-                select new { ur.UserId, ro.Name }
-            )
-            .GroupBy(x => x.UserId)
-            .ToDictionaryAsync(
-                g => g.Key,
-                g => g.Select(x => x.Name).Distinct().ToList(),
-                cancellationToken);
+            : await db.Users.AsNoTracking()
+                .Where(u => userIds.Contains(u.Id) && !u.IsDeleted && u.RoleId != null)
+                .Include(u => u.Role)
+                .Where(u => u.Role != null && !u.Role.IsDeleted)
+                .ToDictionaryAsync(
+                    u => u.Id,
+                    u => new List<string> { u.Role!.Name },
+                    cancellationToken);
 
         var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
             db, paged.Items.Select(r => r.CommunityId), cancellationToken);
@@ -552,6 +553,23 @@ public sealed class ResidentService(
         // User.Email / User.Phone are the source of truth for uniqueness — a duplicate maps to
         // CONFLICT centrally rather than a read-then-write pre-check.
         var isEmail = identifier.Contains('@', StringComparison.Ordinal);
+        var roleName = string.IsNullOrWhiteSpace(request.RoleName) ? DefaultResidentRoleName : request.RoleName.Trim();
+        var role = await db.Roles
+            .FirstOrDefaultAsync(r => r.Name == roleName, cancellationToken);
+
+        var resOrgId = resident.OrganizationId;
+        if (!resOrgId.HasValue)
+        {
+            resOrgId = await db.Communities.IgnoreQueryFilters()
+                .Where(c => c.Id == resident.CommunityId)
+                .Select(c => (Guid?)c.OrganizationId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (resOrgId.HasValue)
+            {
+                resident.OrganizationId = resOrgId.Value;
+            }
+        }
+
         var user = new User
         {
             Name = resident.Name,
@@ -559,29 +577,14 @@ public sealed class ResidentService(
             Phone = isEmail ? null : identifier,
             PasswordHash = passwordHasher.Hash(request.Password),
             Status = UserStatus.Active,
+            RoleId = role?.Id,
+            CommunityId = resident.CommunityId,
+            OrganizationId = resOrgId,
         };
         db.Users.Add(user);
 
-        // Link the resident to the new login.
         resident.UserId = user.Id;
-
-        // Assign the named role (default "Resident") scoped to the resident's community so the login
-        // can actually use resident features. If no such role exists we still create the login + link
-        // (RoleAssigned = null) rather than fail — the admin can grant a role later.
-        var roleName = string.IsNullOrWhiteSpace(request.RoleName) ? DefaultResidentRoleName : request.RoleName.Trim();
-        var role = await db.Roles
-            .FirstOrDefaultAsync(r => r.Name == roleName, cancellationToken);
-        string? roleAssigned = null;
-        if (role is not null)
-        {
-            db.UserRoles.Add(new UserRole
-            {
-                UserId = user.Id,
-                RoleId = role.Id,
-                CommunityId = resident.CommunityId,
-            });
-            roleAssigned = role.Name;
-        }
+        string? roleAssigned = role?.Name;
 
         // A duplicate identifier races the filtered unique index on User.Email/Phone; translate the
         // violation into a clean CONFLICT (409) rather than a raw 500, instead of a read-then-write
@@ -854,14 +857,7 @@ public sealed class ResidentService(
                     loginUser.DeletedAtUtc = now;
                 }
 
-                var assignments = await db.UserRoles
-                    .Where(ur => ur.UserId == linkedUserId && !ur.IsDeleted)
-                    .ToListAsync(cancellationToken);
-                foreach (var ur in assignments)
-                {
-                    ur.IsDeleted = true;
-                    ur.DeletedAtUtc = now;
-                }
+                // No separate user roles table to clean up
 
                 resident.UserId = null;
             }
@@ -1025,3 +1021,4 @@ public sealed class ResidentService(
         }
     }
 }
+

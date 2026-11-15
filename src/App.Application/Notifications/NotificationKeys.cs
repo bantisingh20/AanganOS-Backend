@@ -26,6 +26,13 @@ public static class NotificationTemplateKeys
     /// </summary>
     public const string SocietyActivated = "admin.society.activated";
 
+    /// <summary>
+    /// The subscription or renewal date for an organization was updated/extended. Sent to the
+    /// organization's admin / society registrant. Account category (mandatory); targets Email + Push.
+    /// Fills {name}, {societyName}, {planMonths}, {expiresAt}, {portalUrl}.
+    /// </summary>
+    public const string SubscriptionUpdated = "admin.subscription.updated";
+
     /// <summary>A new resident join request was submitted → notify community admins. Fills {name}, {unitNumber}.</summary>
     public const string JoinRequestSubmitted = "joinrequest.submitted";
 

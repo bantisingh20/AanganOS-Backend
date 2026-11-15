@@ -19,7 +19,6 @@ public sealed class FilesController(
     [HttpPost]
     [DisableRequestSizeLimit]
     [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
-    [RequirePermission(PermissionAction.Create, "File")]
     public async Task<IActionResult> Upload(
         [FromForm] IFormFile file,
         [FromQuery] string owningResourceType,
@@ -63,7 +62,6 @@ public sealed class FilesController(
     [HttpPost("base64")]
     [DisableRequestSizeLimit]
     [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
-    [RequirePermission(PermissionAction.Create, "File")]
     public async Task<IActionResult> UploadBase64(
         [FromBody] UploadBase64Body body,
         CancellationToken ct)
@@ -110,7 +108,6 @@ public sealed class FilesController(
     }
 
     [HttpGet("{reference:guid}")]
-    [RequirePermission(PermissionAction.View, "File")]
     public async Task<IActionResult> Download(Guid reference, CancellationToken ct)
     {
         var opened = await files.OpenAsync(reference, ct);

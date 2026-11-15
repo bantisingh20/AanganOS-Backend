@@ -237,12 +237,25 @@ public sealed class ResidentOnboardingService(
             .AnyAsync(h => !h.IsDeleted && h.UnitId == request.UnitId && h.EndDate == null, cancellationToken);
         if (unitOccupied) throw new ConflictException("This unit already has a registered resident.");
 
+        var orgId = await db.Communities.IgnoreQueryFilters()
+            .Where(c => c.Id == request.CommunityId)
+            .Select(c => (Guid?)c.OrganizationId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var residentRoleId = await db.Roles.IgnoreQueryFilters()
+            .Where(r => r.Name == "Resident")
+            .Select(r => (Guid?)r.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
         var user = new User
         {
             Phone = phone,
             Email = email,
             PasswordHash = passwordHasher.Hash(password),
             Status = UserStatus.Active,
+            RoleId = residentRoleId,
+            CommunityId = request.CommunityId,
+            OrganizationId = orgId,
         };
         db.Users.Add(user);
 
@@ -250,6 +263,7 @@ public sealed class ResidentOnboardingService(
         var resident = new Resident
         {
             CommunityId = request.CommunityId,
+            OrganizationId = orgId,
             UserId = user.Id,
             Name = name,
             Phone = phone,
@@ -272,14 +286,7 @@ public sealed class ResidentOnboardingService(
             StartDate = DateTime.UtcNow,
         });
 
-        var residentRoleId = await db.Roles.IgnoreQueryFilters()
-            .Where(r => r.Name == "Resident")
-            .Select(r => (Guid?)r.Id)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (residentRoleId is { } roleId)
-        {
-            db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = roleId, CommunityId = request.CommunityId });
-        }
+        // User role set on user directly
 
         var selfie = request.SelfieBase64 ?? request.PhotoBase64;
         var selfieId = await StorePhotoAsync(selfie, request.CommunityId, resident.Id, cancellationToken);
@@ -372,15 +379,7 @@ public sealed class ResidentOnboardingService(
             StartDate = DateTime.UtcNow,
         });
 
-        // Assign the "Resident" role scoped to this community so the new login has resident access.
-        var residentRoleId = await db.Roles.IgnoreQueryFilters()
-            .Where(r => r.Name == "Resident")
-            .Select(r => (Guid?)r.Id)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (residentRoleId is { } roleId)
-        {
-            db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = roleId, CommunityId = req.CommunityId });
-        }
+        // User role set on user directly
 
         req.Status = ResidentJoinRequestStatuses.Approved;
         req.DecidedBy = tenantContext.UserId;
@@ -499,12 +498,12 @@ public sealed class ResidentOnboardingService(
         IReadOnlyDictionary<string, string> placeholders, CancellationToken ct)
     {
         var recipientUserIds = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where ur.CommunityId == communityId || ur.CommunityId == null
-            join rp in db.RolePermissions.AsNoTracking() on ur.RoleId equals rp.RoleId
+            from u in db.Users.AsNoTracking()
+            where (u.CommunityId == communityId || u.CommunityId == null) && u.RoleId != null
+            join rp in db.RolePermissions.AsNoTracking() on u.RoleId!.Value equals rp.RoleId
             join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
             where p.ResourceType == JoinRequestResource && p.Action == PermissionAction.View
-            select ur.UserId)
+            select u.Id)
             .Distinct()
             .ToListAsync(ct);
 
@@ -517,3 +516,4 @@ public sealed class ResidentOnboardingService(
 
     private static bool IsValidPin(string pin) => pin.Length == 4 && pin.All(char.IsDigit);
 }
+

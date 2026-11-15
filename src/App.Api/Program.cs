@@ -110,19 +110,13 @@ app.MapObservabilityEndpoints();
 
 app.MapPipelineDemoEndpoints();
 
-
-
-
-
-if (app.Environment.IsDevelopment())
+using (var scope = app.Services.CreateScope())
 {
-    var devSeed = new App.Api.DevSeed.DevSeedOptions();
-    app.Configuration.GetSection(App.Api.DevSeed.DevSeedOptions.SectionName).Bind(devSeed);
-    if (devSeed.Enabled)
-    {
-        var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
-        await App.Api.DevSeed.DevDataSeeder.SeedAsync(app.Configuration, devSeed, loggerFactory);
-    }
+    var db = scope.ServiceProvider.GetRequiredService<App.Infrastructure.Persistence.AppDbContext>();
+    await db.Database.EnsureCreatedAsync();
+
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    await App.Infrastructure.Persistence.DatabaseMigrationRunner.RunPendingMigrationsAsync(db, logger);
 }
 
 app.Run();

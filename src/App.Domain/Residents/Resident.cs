@@ -2,10 +2,8 @@ using App.Domain.Common;
 
 namespace App.Domain.Residents;
 
-
 public class Resident : TenantOwnedEntity
 {
-    
     public Guid? UserId { get; set; }
 
     /// <summary>Resident's full name. Required.</summary>
@@ -17,13 +15,10 @@ public class Resident : TenantOwnedEntity
     /// <summary>Optional contact phone.</summary>
     public string? Phone { get; set; }
 
-    
     public string? PhotoFileId { get; set; }
 
-   
     public string ResidentType { get; set; } = string.Empty;
 
-    
     public string VerificationStatus { get; set; } = ResidentVerificationStatuses.Pending;
 
     /// <summary>
@@ -52,13 +47,16 @@ public class Resident : TenantOwnedEntity
 
     public string PresenceStatus { get; set; } = ResidentPresenceStatuses.AtHome;
 
+    /// <summary>Optional OrganizationId for organization-level admin tracking.</summary>
+    public Guid? OrganizationId { get; set; }
+    public App.Domain.Community.Organization? Organization { get; set; }
+
     /// <summary>Household associations of this resident with units (Req 15.2).</summary>
     public ICollection<HouseholdMember> HouseholdMembers { get; set; } = new List<HouseholdMember>();
 
     /// <summary>Emergency contacts for this resident (Req 15.3). One-to-many.</summary>
     public ICollection<EmergencyContact> EmergencyContacts { get; set; } = new List<EmergencyContact>();
 }
-
 
 public static class ResidentPresenceStatuses
 {

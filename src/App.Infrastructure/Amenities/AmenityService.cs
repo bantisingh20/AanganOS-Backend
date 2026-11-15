@@ -1273,12 +1273,12 @@ public sealed class AmenityService(
         // filter), so the community predicate on the UserRole scope is explicit — the same audience
         // resolution Parcel/SecurityOps use for admin notices.
         var approverUserIds = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where ur.CommunityId == booking.CommunityId || ur.CommunityId == null
-            join rp in db.RolePermissions.AsNoTracking() on ur.RoleId equals rp.RoleId
+            from u in db.Users.AsNoTracking()
+            where (u.CommunityId == booking.CommunityId || u.CommunityId == null) && u.RoleId != null
+            join rp in db.RolePermissions.AsNoTracking() on u.RoleId!.Value equals rp.RoleId
             join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
             where p.ResourceType == "Booking" && p.Action == PermissionAction.Approve
-            select ur.UserId)
+            select u.Id)
             .Distinct()
             .ToListAsync(cancellationToken);
 
@@ -1547,3 +1547,4 @@ public sealed class AmenityService(
     private static ResidentEventRegistrationDto ToDto(DomainResidentEventRegistration r) =>
         new(r.Id, r.CommunityId, r.ResidentEventId, r.ResidentId, r.UnitId, r.RegisteredAtUtc, r.IsCancelled);
 }
+

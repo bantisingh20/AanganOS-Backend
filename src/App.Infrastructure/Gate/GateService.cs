@@ -65,6 +65,48 @@ public sealed class GateService(
             .Filterable("createdAtUtc", v => v.CreatedAtUtc)
             .Searchable(v => v.Name);
 
+    private sealed class UnifiedVisitorItem
+    {
+        public Guid Id { get; set; }
+        public Guid CommunityId { get; set; }
+        public Guid HostUnitId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string? Phone { get; set; }
+        public string? Email { get; set; }
+        public string Category { get; set; } = string.Empty;
+        public Guid? PhotoFileId { get; set; }
+        public string? VehicleNumber { get; set; }
+        public string? GateLocation { get; set; }
+        public string? IdProofType { get; set; }
+        public string? IdProofNumber { get; set; }
+        public string? Purpose { get; set; }
+        public string? WhomToMeet { get; set; }
+        public int? ExpectedDurationMinutes { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public Guid? ApprovedByResidentId { get; set; }
+        public DateTime? ApprovalDecisionAtUtc { get; set; }
+        public bool IsAdmittable { get; set; }
+        public string? QrToken { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
+        public string? PassType { get; set; }
+        public string? PublicToken { get; set; }
+        public DateTime? ValidUntilUtc { get; set; }
+    }
+
+    private static readonly ListQueryConfiguration<UnifiedVisitorItem> UnifiedVisitorQueryConfig =
+        new ListQueryConfiguration<UnifiedVisitorItem>()
+            .WithDefaultSort(v => v.CreatedAtUtc, SortDirection.Descending)
+            .Sortable("status", v => v.Status)
+            .Sortable("category", v => v.Category)
+            .Sortable("name", v => v.Name)
+            .Sortable("createdAtUtc", v => v.CreatedAtUtc)
+            .Filterable("status", v => v.Status)
+            .Filterable("category", v => v.Category)
+            .Filterable("passType", v => v.PassType)
+            .Filterable("hostUnitId", v => v.HostUnitId)
+            .Filterable("createdAtUtc", v => v.CreatedAtUtc)
+            .Searchable(v => v.Name);
+
     private static readonly ListQueryConfiguration<EntryExitEvent> EntryExitEventQueryConfig =
         new ListQueryConfiguration<EntryExitEvent>()
             // Newest-first chronological log by default, riding the (CommunityId, EntryTsUtc) index.
@@ -148,6 +190,12 @@ public sealed class GateService(
 
         var otp = GenerateOtp();
 
+        var photoFileId = request.PhotoFileId;
+        if (photoFileId is null && !string.IsNullOrWhiteSpace(request.PhotoBase64))
+        {
+            photoFileId = await SavePhotoFromBase64Async(request.PhotoBase64, communityId, "VisitPass", cancellationToken);
+        }
+
         var pass = new VisitPass
         {
             CommunityId = communityId,
@@ -161,7 +209,7 @@ public sealed class GateService(
             NumberOfPersons = request.NumberOfPersons,
             WhomToMeet = string.IsNullOrWhiteSpace(request.WhomToMeet) ? null : request.WhomToMeet.Trim(),
             VisitDateUtc = request.VisitDateUtc,
-            PhotoFileId = request.PhotoFileId,
+            PhotoFileId = photoFileId,
             OtpHash = hasher.Hash(otp),
             PublicToken = GenerateQrToken(),
             ValidFromUtc = validFrom,
@@ -309,6 +357,66 @@ public sealed class GateService(
         var base64 = Convert.ToBase64String(ms.ToArray());
         var contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
         return $"data:{contentType};base64,{base64}";
+    }
+
+    private async Task<Guid?> SavePhotoFromBase64Async(
+        string? base64Data,
+        Guid communityId,
+        string owningResourceType,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(base64Data))
+        {
+            return null;
+        }
+
+        try
+        {
+            var raw = base64Data.Trim();
+            var contentType = "image/jpeg";
+            var commaIndex = raw.IndexOf(',');
+            if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && commaIndex > 0)
+            {
+                var header = raw[..commaIndex];
+                if (header.Contains("image/png", StringComparison.OrdinalIgnoreCase))
+                {
+                    contentType = "image/png";
+                }
+                else if (header.Contains("image/webp", StringComparison.OrdinalIgnoreCase))
+                {
+                    contentType = "image/webp";
+                }
+                raw = raw[(commaIndex + 1)..];
+            }
+
+            var bytes = Convert.FromBase64String(raw);
+            if (bytes.Length == 0)
+            {
+                return null;
+            }
+
+            await using var inputStream = new MemoryStream(bytes);
+            var storageKey = await blobStore.SaveAsync(inputStream, cancellationToken);
+
+            var storedFile = new StoredFile
+            {
+                CommunityId = communityId,
+                OwningResourceType = owningResourceType,
+                FileName = $"{owningResourceType.ToLowerInvariant()}-{Guid.NewGuid():N}.jpg",
+                ContentType = contentType,
+                SizeBytes = bytes.Length,
+                StorageKey = storageKey,
+            };
+
+            db.Set<StoredFile>().Add(storedFile);
+            await db.SaveChangesAsync(cancellationToken);
+
+            return storedFile.Id;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public async Task<SharePassResult> SharePassAsync(Guid passId, SharePassRequest request, CancellationToken cancellationToken = default)
@@ -479,6 +587,12 @@ public sealed class GateService(
             throw new ValidationException("expectedDurationMinutes", "Expected duration must be greater than zero.");
         }
 
+        var photoFileId = request.PhotoFileId;
+        if (photoFileId is null && !string.IsNullOrWhiteSpace(request.PhotoBase64))
+        {
+            photoFileId = await SavePhotoFromBase64Async(request.PhotoBase64, communityId, "Visitor", cancellationToken);
+        }
+
         var visitor = new Visitor
         {
             CommunityId = communityId,
@@ -487,7 +601,7 @@ public sealed class GateService(
             Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
             Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim(),
             Category = request.Category.Trim(),
-            PhotoFileId = request.PhotoFileId,
+            PhotoFileId = photoFileId,
             VehicleNumber = string.IsNullOrWhiteSpace(request.VehicleNumber) ? null : request.VehicleNumber.Trim(),
             GateLocation = string.IsNullOrWhiteSpace(request.GateLocation) ? null : request.GateLocation.Trim(),
             IdProofType = string.IsNullOrWhiteSpace(request.IdProofType) ? null : request.IdProofType.Trim(),
@@ -598,6 +712,12 @@ public sealed class GateService(
         await RequireValidCategoryAsync(request.Category, communityId, cancellationToken);
         ValidateSchedule(request);
 
+        var photoFileId = request.PhotoFileId;
+        if (photoFileId is null && !string.IsNullOrWhiteSpace(request.PhotoBase64))
+        {
+            photoFileId = await SavePhotoFromBase64Async(request.PhotoBase64, communityId, "RecurringVisitor", cancellationToken);
+        }
+
         var recurring = new RecurringVisitor
         {
             CommunityId = communityId,
@@ -605,7 +725,7 @@ public sealed class GateService(
             HostResidentId = request.HostResidentId,
             Name = name,
             Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
-            PhotoFileId = request.PhotoFileId,
+            PhotoFileId = photoFileId,
             Category = request.Category.Trim(),
             DaysOfWeek = request.DaysOfWeek,
             StartDate = request.StartDate.Date,
@@ -1083,17 +1203,89 @@ public sealed class GateService(
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        // The pending-approval queue (Req 24.2): tenant/self-scoped; a status=pending filter surfaces
-        // the walk-ins a resident must approve/reject for their own unit.
-        var query = db.Visitors.AsNoTracking();
+        // Check if query is explicitly filtering only pending walk-ins (e.g. approvals queue)
+        var statusFilter = parameters.Filters.FirstOrDefault(f => string.Equals(f.Field, "status", StringComparison.OrdinalIgnoreCase));
+        var isOnlyPending = statusFilter != null && string.Equals(statusFilter.Value, VisitorStatuses.Pending, StringComparison.OrdinalIgnoreCase);
+
+        var vQuery = db.Visitors.AsNoTracking();
+        var pQuery = db.VisitPasses.AsNoTracking();
+
         if (organizationId is { } orgId)
         {
             var communityIds = await CommunityIdsForOrgAsync(orgId, cancellationToken);
-            query = query.Where(v => communityIds.Contains(v.CommunityId));
+            vQuery = vQuery.Where(v => communityIds.Contains(v.CommunityId));
+            pQuery = pQuery.Where(p => communityIds.Contains(p.CommunityId));
+        }
+
+        var vItems = vQuery.Select(v => new UnifiedVisitorItem
+        {
+            Id = v.Id,
+            CommunityId = v.CommunityId,
+            HostUnitId = v.UnitId ?? Guid.Empty,
+            Name = v.Name,
+            Phone = v.Phone,
+            Email = v.Email,
+            Category = v.Category,
+            PhotoFileId = v.PhotoFileId,
+            VehicleNumber = v.VehicleNumber,
+            GateLocation = v.GateLocation,
+            IdProofType = v.IdProofType,
+            IdProofNumber = v.IdProofNumber,
+            Purpose = v.Purpose,
+            WhomToMeet = v.WhomToMeet,
+            ExpectedDurationMinutes = v.ExpectedDurationMinutes,
+            Status = v.Status,
+            ApprovedByResidentId = v.ApprovedByResidentId,
+            ApprovalDecisionAtUtc = v.ApprovalDecisionAtUtc,
+            IsAdmittable = v.Status == VisitorStatuses.Approved,
+            QrToken = v.QrToken,
+            CreatedAtUtc = v.CreatedAtUtc,
+            PassType = "walkin",
+            PublicToken = null,
+            ValidUntilUtc = null
+        });
+
+        IQueryable<UnifiedVisitorItem> query;
+        if (isOnlyPending)
+        {
+            // Visit passes are pre-approved by resident; they don't have pending approval state
+            query = vItems;
+        }
+        else
+        {
+            var pItems = pQuery.Select(p => new UnifiedVisitorItem
+            {
+                Id = p.Id,
+                CommunityId = p.CommunityId,
+                HostUnitId = p.UnitId ?? Guid.Empty,
+                Name = p.VisitorName,
+                Phone = p.Phone,
+                Email = p.Email,
+                Category = "Guest",
+                PhotoFileId = p.PhotoFileId,
+                VehicleNumber = p.VehicleNumber,
+                GateLocation = null,
+                IdProofType = null,
+                IdProofNumber = null,
+                Purpose = p.WhomToMeet ?? "Visit Pass",
+                WhomToMeet = p.WhomToMeet,
+                ExpectedDurationMinutes = null,
+                Status = p.Status,
+                ApprovedByResidentId = p.HostResidentId,
+                ApprovalDecisionAtUtc = (DateTime?)p.CreatedAtUtc,
+                IsAdmittable = p.Status == VisitPassStatuses.Active,
+                QrToken = p.QrToken,
+                CreatedAtUtc = p.CreatedAtUtc,
+                PassType = "pass",
+                PublicToken = p.PublicToken,
+                ValidUntilUtc = p.ValidUntilUtc
+            });
+
+            query = vItems.Concat(pItems);
         }
 
         var page = await query.ToPagedResultAsync(
-            parameters, VisitorQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
+            parameters, UnifiedVisitorQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
         var withUnits = await WithUnitNumbersAsync(page.Items, cancellationToken);
         var withOrg = await WithOrganizationNamesAsync(withUnits, v => v.CommunityId, (v, n) => v with { OrganizationName = n }, cancellationToken);
         return new PagedData<VisitorDto> { Items = withOrg, Page = page.Page, PageSize = page.PageSize, TotalCount = page.TotalCount };
@@ -1130,9 +1322,20 @@ public sealed class GateService(
     public async Task<VisitorDto?> GetVisitorAsync(Guid visitorId, CancellationToken cancellationToken = default)
     {
         var visitor = await db.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == visitorId, cancellationToken);
-        if (visitor is null) return null;
-        var filled = await WithUnitNumbersAsync(new[] { ToDto(visitor) }, cancellationToken);
-        return filled[0];
+        if (visitor is not null)
+        {
+            var filled = await WithUnitNumbersAsync(new[] { ToDto(visitor) }, cancellationToken);
+            return filled[0];
+        }
+
+        var pass = await db.VisitPasses.AsNoTracking().FirstOrDefaultAsync(p => p.Id == visitorId, cancellationToken);
+        if (pass is not null)
+        {
+            var filled = await WithUnitNumbersAsync(new[] { PassToVisitorDto(pass) }, cancellationToken);
+            return filled[0];
+        }
+
+        return null;
     }
 
     // Resolve the host unit number for a batch of visitor DTOs in one query (avoids N+1) and returns
@@ -1649,11 +1852,50 @@ public sealed class GateService(
             p.QrToken, p.ValidFromUtc, p.ValidUntilUtc, p.MaxUses, p.UseCount, p.Status,
             PublicToken: p.PublicToken);
 
+    private static VisitorDto ToDto(UnifiedVisitorItem v) =>
+        new(v.Id, v.CommunityId, v.HostUnitId, v.Name, v.Phone, v.Email, v.Category, v.PhotoFileId,
+            v.VehicleNumber, v.GateLocation, v.IdProofType, v.IdProofNumber, v.Purpose,
+            v.WhomToMeet, v.ExpectedDurationMinutes, v.Status, v.ApprovedByResidentId,
+            v.ApprovalDecisionAtUtc, v.IsAdmittable, v.QrToken,
+            HostUnitNumber: null,
+            OrganizationName: null,
+            CreatedAtUtc: v.CreatedAtUtc,
+            PassType: v.PassType,
+            PublicToken: v.PublicToken,
+            ValidUntilUtc: v.ValidUntilUtc);
+
+    private static VisitorDto PassToVisitorDto(VisitPass p) =>
+        new(p.Id, p.CommunityId, p.HostUnitId, p.VisitorName, p.Phone, p.Email,
+            Category: "Guest",
+            PhotoFileId: p.PhotoFileId,
+            VehicleNumber: p.VehicleNumber,
+            GateLocation: null,
+            IdProofType: null,
+            IdProofNumber: null,
+            Purpose: p.WhomToMeet ?? "Visit Pass",
+            WhomToMeet: p.WhomToMeet,
+            ExpectedDurationMinutes: null,
+            Status: p.Status,
+            ApprovedByResidentId: p.HostResidentId,
+            ApprovalDecisionAtUtc: p.CreatedAtUtc,
+            IsAdmittable: p.Status == VisitPassStatuses.Active,
+            QrToken: p.QrToken,
+            HostUnitNumber: null,
+            OrganizationName: null,
+            CreatedAtUtc: p.CreatedAtUtc,
+            PassType: "pass",
+            PublicToken: p.PublicToken,
+            ValidUntilUtc: p.ValidUntilUtc);
+
     private static VisitorDto ToDto(Visitor v) =>
         new(v.Id, v.CommunityId, v.HostUnitId, v.Name, v.Phone, v.Email, v.Category, v.PhotoFileId,
             v.VehicleNumber, v.GateLocation, v.IdProofType, v.IdProofNumber, v.Purpose,
             v.WhomToMeet, v.ExpectedDurationMinutes, v.Status, v.ApprovedByResidentId,
-            v.ApprovalDecisionAtUtc, v.IsAdmittable, v.QrToken);
+            v.ApprovalDecisionAtUtc, v.IsAdmittable, v.QrToken,
+            HostUnitNumber: null,
+            OrganizationName: null,
+            CreatedAtUtc: v.CreatedAtUtc,
+            PassType: "walkin");
 
     private static RecurringVisitorDto ToDto(RecurringVisitor r) =>
         new(r.Id, r.CommunityId, r.HostUnitId, r.HostResidentId, r.Name, r.Phone, r.Category,

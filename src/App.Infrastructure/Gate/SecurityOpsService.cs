@@ -628,12 +628,12 @@ public sealed class SecurityOpsService(
         // grant View on the resource type. Permission/Role/UserRole are platform-scoped (no tenant
         // filter), so the community predicate on the UserRole scope is explicit here.
         var recipientUserIds = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where ur.CommunityId == communityId || ur.CommunityId == null
-            join rp in db.RolePermissions.AsNoTracking() on ur.RoleId equals rp.RoleId
+            from u in db.Users.AsNoTracking()
+            where (u.CommunityId == communityId || u.CommunityId == null) && u.RoleId != null
+            join rp in db.RolePermissions.AsNoTracking() on u.RoleId!.Value equals rp.RoleId
             join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
             where p.ResourceType == resourceType && p.Action == PermissionAction.View
-            select ur.UserId)
+            select u.Id)
             .Distinct()
             .ToListAsync(cancellationToken);
 
@@ -703,3 +703,4 @@ public sealed class SecurityOpsService(
     private static AccessIntegrationEventDto ToDto(AccessIntegrationEvent e) =>
         new(e.Id, e.CommunityId, e.GateId, e.GateLabel, e.Action, e.Status, e.Detail);
 }
+

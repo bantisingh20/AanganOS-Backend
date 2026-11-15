@@ -64,25 +64,37 @@ public sealed class FileService(
 
         try
         {
-            var compressionResult = await compressionService.CompressImageAsync(
-                request.Content,
-                request.ContentType,
-                request.FileName,
-                maxWidth: 1920,
-                maxHeight: 1080,
-                targetMaxSizeBytes: 500 * 1024,
-                cancellationToken: cancellationToken);
-
-            if (compressionResult.WasCompressed)
+            try
             {
-                streamToSave = compressionResult.Stream;
-                compressedStreamToDispose = compressionResult.Stream;
-                effectiveContentType = compressionResult.ContentType;
-                if (!effectiveFileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) &&
-                    !effectiveFileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+                var compressionResult = await compressionService.CompressImageAsync(
+                    request.Content,
+                    request.ContentType,
+                    request.FileName,
+                    maxWidth: 1920,
+                    maxHeight: 1080,
+                    targetMaxSizeBytes: 500 * 1024,
+                    cancellationToken: cancellationToken);
+
+                if (compressionResult.WasCompressed)
                 {
-                    effectiveFileName = Path.ChangeExtension(effectiveFileName, ".jpg");
+                    streamToSave = compressionResult.Stream;
+                    compressedStreamToDispose = compressionResult.Stream;
+                    effectiveContentType = compressionResult.ContentType;
+                    if (!effectiveFileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) &&
+                        !effectiveFileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+                    {
+                        effectiveFileName = Path.ChangeExtension(effectiveFileName, ".jpg");
+                    }
                 }
+            }
+            catch
+            {
+                // Graceful fallback: if compression encounters an error, proceed with original stream
+                if (request.Content.CanSeek)
+                {
+                    request.Content.Position = 0;
+                }
+                streamToSave = request.Content;
             }
 
             // Persist bytes through the blob store, capping the stream at MaxSizeBytes so a stream that

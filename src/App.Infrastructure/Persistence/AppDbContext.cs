@@ -35,7 +35,6 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<Permission> Permissions => Set<Permission>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
-    public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<MenuItem> MenuItems => Set<MenuItem>();
 
     public DbSet<LoginSession> LoginSessions => Set<LoginSession>();
@@ -273,3 +272,4 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         where TEntity : PlatformEntity =>
         modelBuilder.Entity<TEntity>().HasQueryFilter(e => !e.IsDeleted);
 }
+

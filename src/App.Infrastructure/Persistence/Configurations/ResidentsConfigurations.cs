@@ -1,4 +1,4 @@
-﻿using App.Domain.Community;
+using App.Domain.Community;
 using App.Domain.Residents;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore;
@@ -9,13 +9,13 @@ namespace App.Infrastructure.Persistence.Configurations;
 /// Maps the <see cref="HouseholdMember"/> link table (Req 15.2) that associates a
 /// <see cref="Resident"/> with a Unit. As a <c>TenantOwnedEntity</c> that is also
 /// <c>IUnitScoped</c> it inherits the tenant + soft-delete + <b>resident self-scope</b> global
-/// filter (Req 5.4, 66.3) and the rowversion mapping from <c>AppDbContext.OnModelCreating</c> â€” a
+/// filter (Req 5.4, 66.3) and the rowversion mapping from <c>AppDbContext.OnModelCreating</c> — a
 /// resident-self-scoped principal therefore only sees their own household rows.
 ///
 /// <para>Relationships are <c>Restrict</c> on delete so a resident or unit cannot be hard-deleted
 /// out from under its household rows; deletes are soft deletes anyway. The
 /// <c>(CommunityId, ResidentId)</c> index backs "a resident's household associations" and the
-/// <c>(CommunityId, UnitId)</c> index backs "a unit's current/past household" â€” both as single
+/// <c>(CommunityId, UnitId)</c> index backs "a unit's current/past household" — both as single
 /// indexed reads (no N+1).</para>
 /// </summary>
 public sealed class HouseholdMemberEntityConfiguration : IEntityTypeConfiguration<HouseholdMember>
@@ -27,7 +27,7 @@ public sealed class HouseholdMemberEntityConfiguration : IEntityTypeConfiguratio
 
         builder.Property(h => h.Relationship).IsRequired().HasMaxLength(100);
 
-        // Resident â†’ household members (one-to-many). Restrict: keep the link traceable; soft delete
+        // Resident → household members (one-to-many). Restrict: keep the link traceable; soft delete
         // handles archival.
         builder.HasOne(h => h.Resident)
             .WithMany(r => r.HouseholdMembers)
@@ -64,7 +64,7 @@ public sealed class HouseholdMemberEntityConfiguration : IEntityTypeConfiguratio
 /// <c>AppDbContext.OnModelCreating</c> (where the provider is known) as a hard DB guarantee; the
 /// SQLite test path relies on the transactional close+insert. ponytail: the SQLite fixture has no
 /// filtered-index equivalent wired here, so under that provider the invariant rests on the
-/// single-transaction close+insert rather than a DB constraint â€” acceptable for the test path;
+/// single-transaction close+insert rather than a DB constraint — acceptable for the test path;
 /// production (SQL Server) gets the index.</para>
 ///
 /// <para>Relationships are <c>Restrict</c> on delete so a resident or unit cannot be hard-deleted out
@@ -78,7 +78,7 @@ public sealed class OwnershipHistoryEntityConfiguration : IEntityTypeConfigurati
         builder.ToTable("OwnershipHistories");
         builder.HasKey(o => o.Id);
 
-        // Owner (resident) â†’ ownership rows. Restrict: keep history traceable; soft delete archives.
+        // Owner (resident) → ownership rows. Restrict: keep history traceable; soft delete archives.
         builder.HasOne(o => o.Resident)
             .WithMany()
             .HasForeignKey(o => o.ResidentId)
@@ -99,10 +99,10 @@ public sealed class OwnershipHistoryEntityConfiguration : IEntityTypeConfigurati
 /// <summary>
 /// Maps the <see cref="Pet"/> table (Req 19.3). As a <c>TenantOwnedEntity</c> that is also
 /// <c>IUnitScoped</c> it inherits the tenant + soft-delete + resident self-scope global filter
-/// (Req 5.4, 19.5) and the rowversion mapping from <c>AppDbContext.OnModelCreating</c> â€” a resident
+/// (Req 5.4, 19.5) and the rowversion mapping from <c>AppDbContext.OnModelCreating</c> — a resident
 /// principal only sees their own unit's pets.
 ///
-/// <para>No uniqueness constraint â€” a unit may register several pets (Req 19.3 stores type + owning
+/// <para>No uniqueness constraint — a unit may register several pets (Req 19.3 stores type + owning
 /// unit only). The <c>(CommunityId, UnitId)</c> index backs "a unit's pets" as a single indexed read
 /// (no N+1). The unit FK is <c>Restrict</c> on delete; deletes are soft deletes anyway.</para>
 /// </summary>
@@ -129,7 +129,7 @@ public sealed class PetEntityConfiguration : IEntityTypeConfiguration<Pet>
 /// <summary>
 /// Maps the <see cref="ResidentJoinRequest"/> table (resident self-onboarding). A
 /// <c>TenantOwnedEntity</c>, so it inherits the tenant + soft-delete global filter and rowversion
-/// mapping from <c>AppDbContext.OnModelCreating</c>. NOT <c>IUnitScoped</c> â€” a join request is read
+/// mapping from <c>AppDbContext.OnModelCreating</c>. NOT <c>IUnitScoped</c> — a join request is read
 /// by community ADMINS (not residents), so it's community-scoped only.
 ///
 /// <para>The <c>(CommunityId, Status, CreatedAtUtc)</c> index backs the admin "pending requests"
@@ -164,14 +164,14 @@ public sealed class ResidentJoinRequestEntityConfiguration : IEntityTypeConfigur
 }
 
 /// <summary>
-/// Maps the <see cref="StorageLocation"/> table (Req 19.4) â€” the storage counterpart of
+/// Maps the <see cref="StorageLocation"/> table (Req 19.4) — the storage counterpart of
 /// <see cref="ParkingSlot"/>. As a <c>TenantOwnedEntity</c> it inherits the tenant + soft-delete
 /// global filter and the rowversion mapping from <c>AppDbContext.OnModelCreating</c>.
 ///
 /// <para>Unique <c>(CommunityId, Code)</c> keeps location codes distinct within a community; the
 /// optional <c>AssignedUnitId</c> FK is <c>Restrict</c> on delete and the <c>(CommunityId,
 /// AssignedUnitId)</c> index backs "a unit's assigned storage" as a single indexed read (Req 19.5).
-/// ponytail: single reassignable owner, no active-assignment uniqueness â€” Phase 6 scope.</para>
+/// ponytail: single reassignable owner, no active-assignment uniqueness — Phase 6 scope.</para>
 /// </summary>
 public sealed class StorageLocationEntityConfiguration : IEntityTypeConfiguration<StorageLocation>
 {
@@ -218,7 +218,7 @@ public sealed class TenancyHistoryEntityConfiguration : IEntityTypeConfiguration
         builder.ToTable("TenancyHistories");
         builder.HasKey(t => t.Id);
 
-        // Tenant (resident) â†’ tenancy rows. Restrict: keep history traceable; soft delete archives.
+        // Tenant (resident) → tenancy rows. Restrict: keep history traceable; soft delete archives.
         builder.HasOne(t => t.Resident)
             .WithMany()
             .HasForeignKey(t => t.ResidentId)
@@ -239,14 +239,14 @@ public sealed class TenancyHistoryEntityConfiguration : IEntityTypeConfiguration
 /// <summary>
 /// Maps the <see cref="Vehicle"/> table (Req 19.1, 19.2). As a <c>TenantOwnedEntity</c> that is also
 /// <c>IUnitScoped</c> it inherits the tenant + soft-delete + resident self-scope global filter
-/// (Req 5.4, 19.5) and the rowversion mapping from <c>AppDbContext.OnModelCreating</c> â€” a resident
+/// (Req 5.4, 19.5) and the rowversion mapping from <c>AppDbContext.OnModelCreating</c> — a resident
 /// principal only sees their own unit's vehicles.
 ///
 /// <para><b>Concurrency-safe uniqueness (Req 19.2).</b> The unique index on
 /// <c>(CommunityId, RegistrationNumber)</c> is the single source of truth for registration-number
 /// uniqueness within a community: two concurrent registrations race to the index and exactly one
 /// wins; the service lets the index reject the loser and maps the violation to CONFLICT
-/// (<c>UniqueConstraintGuard</c>) rather than a read-then-write pre-check â€” the same approach as
+/// (<c>UniqueConstraintGuard</c>) rather than a read-then-write pre-check — the same approach as
 /// <c>Unit(CommunityId, UnitNumber)</c>.</para>
 ///
 /// <para>The <c>(CommunityId, UnitId)</c> index backs "a unit's vehicles" as a single indexed read
@@ -297,14 +297,14 @@ public sealed class CommunicationPreferenceEntityConfiguration : IEntityTypeConf
 
         builder.Property(p => p.Category).IsRequired().HasMaxLength(100);
 
-        // Resident â†’ communication preferences (one-to-many). Restrict: keep the preference traceable
+        // Resident → communication preferences (one-to-many). Restrict: keep the preference traceable
         // with the resident; soft delete handles archival.
         builder.HasOne(p => p.Resident)
             .WithMany()
             .HasForeignKey(p => p.ResidentId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // One preference row per (resident, category) â€” the invariant for Req 20.1 and the indexed
+        // One preference row per (resident, category) — the invariant for Req 20.1 and the indexed
         // lookup path for the Notification_Service preference check.
         builder.HasIndex(p => new { p.ResidentId, p.Category })
             .IsUnique()
@@ -329,7 +329,7 @@ public sealed class EmergencyContactEntityConfiguration : IEntityTypeConfigurati
         builder.Property(c => c.Phone).IsRequired().HasMaxLength(50);
         builder.Property(c => c.Relationship).IsRequired().HasMaxLength(100);
 
-        // Resident â†’ emergency contacts (one-to-many). Restrict: contacts stay traceable with the
+        // Resident → emergency contacts (one-to-many). Restrict: contacts stay traceable with the
         // resident; soft delete handles archival.
         builder.HasOne(c => c.Resident)
             .WithMany(r => r.EmergencyContacts)
@@ -363,8 +363,14 @@ public sealed class ResidentEntityConfiguration : IEntityTypeConfiguration<Resid
         builder.Property(r => r.GovtIdFrontFileId).HasMaxLength(200);
         builder.Property(r => r.GovtIdBackFileId).HasMaxLength(200);
 
+        builder.HasOne(r => r.Organization)
+            .WithMany()
+            .HasForeignKey(r => r.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         // Verification-queue list (Req 15.4): residents in a community by verification status.
         builder.HasIndex(r => new { r.CommunityId, r.VerificationStatus })
             .HasDatabaseName("IX_Resident_CommunityId_VerificationStatus");
     }
 }
+

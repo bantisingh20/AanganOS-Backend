@@ -203,9 +203,9 @@ public sealed class MenuService(
     private async Task<HashSet<MenuSurface>> ResolveSurfacesAsync(Guid userId, CancellationToken cancellationToken)
     {
         var roleSurfaces = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where ur.UserId == userId
-            join r in db.Roles.AsNoTracking() on ur.RoleId equals r.Id
+            from u in db.Users.AsNoTracking()
+            where u.Id == userId && u.RoleId != null
+            join r in db.Roles.AsNoTracking() on u.RoleId!.Value equals r.Id
             select r.Surface).Distinct().ToListAsync(cancellationToken);
 
         var surfaces = new HashSet<MenuSurface>();
@@ -223,3 +223,4 @@ public sealed class MenuService(
         return surfaces;
     }
 }
+

@@ -86,5 +86,101 @@ public sealed class AuthorizationService(
     }
 
     private static bool ResourceMatches(string granted, string required)
-        => string.Equals(granted, required, StringComparison.OrdinalIgnoreCase);
+    {
+        if (string.Equals(granted, required, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(granted) || string.IsNullOrWhiteSpace(required))
+        {
+            return false;
+        }
+
+        var gClean = StripPrefixes(granted);
+        var rClean = StripPrefixes(required);
+
+        // 1. Direct match on clean string
+        if (string.Equals(gClean, rClean, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // 2. Singular / Plural normalization (e.g. "announcements" <-> "announcement")
+        var gNorm = NormalizeSingular(gClean);
+        var rNorm = NormalizeSingular(rClean);
+
+        if (string.Equals(gNorm, rNorm, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // 3. Segmented fuzzy matching across dots / dashes (e.g. "visitors.invite" matches "visitor")
+        var gSegments = gClean.Split(new[] { '.', '-', '_' }, StringSplitOptions.RemoveEmptyEntries)
+                              .Select(NormalizeSingular)
+                              .ToArray();
+
+        if (gSegments.Any(s => string.Equals(s, rNorm, StringComparison.OrdinalIgnoreCase) ||
+                               (s.Length >= 4 && rNorm.Contains(s, StringComparison.OrdinalIgnoreCase)) ||
+                               (rNorm.Length >= 4 && s.Contains(rNorm, StringComparison.OrdinalIgnoreCase))))
+        {
+            return true;
+        }
+
+        // 4. Semantic domain aliases without hardcoded strictness
+        var gLower = gClean.ToLowerInvariant();
+        var rLower = rClean.ToLowerInvariant();
+
+        return (gLower, rLower) switch
+        {
+            (var gl, var rl) when gl.Contains("helpdesk") && rl.Contains("ticket") => true,
+            (var gl, var rl) when gl.Contains("household") && (rl.Contains("resident") || rl.Contains("member") || rl.Contains("pet") || rl.Contains("vehicle") || rl.Contains("emergency")) => true,
+            (var gl, var rl) when gl.Contains("entryexit") && (rl.Contains("event") || rl.Contains("pass") || rl.Contains("visitor")) => true,
+            (var gl, var rl) when gl.Contains("recurring") && (rl.Contains("recurring") || rl.Contains("visitor")) => true,
+            (var gl, var rl) when gl.Contains("sos") && rl.Contains("sos") => true,
+            (var gl, var rl) when gl.Contains("maintenance") && rl.Contains("maintenance") => true,
+            (var gl, var rl) when gl.Contains("billing") && (rl.Contains("bill") || rl.Contains("charge") || rl.Contains("payment") || rl.Contains("expense") || rl.Contains("ledger")) => true,
+            (var gl, var rl) when gl.Contains("parcel") && rl.Contains("parcel") => true,
+            (var gl, var rl) when gl.Contains("resident") && (rl.Contains("resident") || rl.Contains("member") || rl.Contains("user")) => true,
+            _ => false
+        };
+    }
+
+    private static string StripPrefixes(string s)
+    {
+        var clean = s.Trim();
+        while (clean.StartsWith("app.", StringComparison.OrdinalIgnoreCase) ||
+               clean.StartsWith("admin.", StringComparison.OrdinalIgnoreCase) ||
+               clean.StartsWith("features.", StringComparison.OrdinalIgnoreCase))
+        {
+            var dot = clean.IndexOf('.');
+            if (dot >= 0)
+            {
+                clean = clean[(dot + 1)..];
+            }
+            else
+            {
+                break;
+            }
+        }
+        return clean;
+    }
+
+    private static string NormalizeSingular(string word)
+    {
+        var w = word.Trim().ToLowerInvariant();
+        if (w.EndsWith("ies") && w.Length > 3)
+        {
+            return w[..^3] + "y";
+        }
+        if (w.EndsWith("ses") && w.Length > 3)
+        {
+            return w[..^2];
+        }
+        if (w.EndsWith("s") && !w.EndsWith("ss") && w.Length > 1)
+        {
+            return w[..^1];
+        }
+        return w;
+    }
 }

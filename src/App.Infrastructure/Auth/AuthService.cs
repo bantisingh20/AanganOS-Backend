@@ -665,32 +665,37 @@ public sealed class AuthService(
     private async Task<(IReadOnlyCollection<Guid> CommunityIds, bool IsSuperAdmin, IReadOnlyCollection<string> RoleNames, IReadOnlyCollection<string> Permissions)>
         ResolveAuthorizationAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var assignments = await (
-            from ur in db.UserRoles.AsNoTracking()
-            where ur.UserId == userId
-            join r in db.Roles.AsNoTracking() on ur.RoleId equals r.Id
-            select new { ur.CommunityId, ur.RoleId, RoleName = r.Name })
-            .ToListAsync(cancellationToken);
+        var user = await db.Users.AsNoTracking()
+            .Include(u => u.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
 
-        var communityList = assignments
-            .Where(a => a.CommunityId.HasValue)
-            .Select(a => a.CommunityId!.Value)
-            .Distinct()
-            .ToList();
-
-        var isOrgAdmin = assignments.Any(a => string.Equals(a.RoleName, "OrganizationAdmin", StringComparison.OrdinalIgnoreCase));
-        if (isOrgAdmin && communityList.Count > 0)
+        if (user is null || !user.RoleId.HasValue || user.Role is null)
         {
-            var firstCommunityId = communityList[0];
-            var orgId = await db.Communities.IgnoreQueryFilters().AsNoTracking()
-                .Where(c => c.Id == firstCommunityId)
-                .Select(c => c.OrganizationId)
-                .FirstOrDefaultAsync(cancellationToken);
+            return (Array.Empty<Guid>(), false, Array.Empty<string>(), Array.Empty<string>());
+        }
 
-            if (orgId != Guid.Empty)
+        var communityList = new List<Guid>();
+        if (user.CommunityId.HasValue)
+        {
+            communityList.Add(user.CommunityId.Value);
+        }
+
+        var isOrgAdmin = string.Equals(user.Role.Name, "OrganizationAdmin", StringComparison.OrdinalIgnoreCase);
+        if (isOrgAdmin)
+        {
+            var orgId = user.OrganizationId;
+            if (!orgId.HasValue && user.CommunityId.HasValue)
+            {
+                orgId = await db.Communities.IgnoreQueryFilters().AsNoTracking()
+                    .Where(c => c.Id == user.CommunityId.Value)
+                    .Select(c => (Guid?)c.OrganizationId)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+
+            if (orgId.HasValue && orgId.Value != Guid.Empty)
             {
                 var allOrgCommunityIds = await db.Communities.IgnoreQueryFilters().AsNoTracking()
-                    .Where(c => c.OrganizationId == orgId && !c.IsDeleted)
+                    .Where(c => c.OrganizationId == orgId.Value && !c.IsDeleted)
                     .Select(c => c.Id)
                     .ToListAsync(cancellationToken);
 
@@ -699,19 +704,15 @@ public sealed class AuthService(
         }
 
         var communityIds = communityList.ToArray();
+        var isSuperAdmin = string.Equals(user.Role.Name, "Superadmin", StringComparison.OrdinalIgnoreCase)
+            || (user.CommunityId is null && !isOrgAdmin);
 
-        // A platform-scoped assignment (null CommunityId) confers the cross-community short-circuit.
-        var isSuperAdmin = assignments.Any(a => a.CommunityId is null);
+        var roleNames = new[] { user.Role.Name };
+        var roleId = user.RoleId.Value;
 
-        var roleNames = assignments
-            .Select(a => a.RoleName)
-            .Distinct()
-            .ToArray();
-
-        var roleIds = assignments.Select(a => a.RoleId).Distinct().ToArray();
         var permissions = await (
             from rp in db.Set<RolePermission>().AsNoTracking()
-            where roleIds.Contains(rp.RoleId)
+            where rp.RoleId == roleId
             join p in db.Set<Permission>().AsNoTracking() on rp.PermissionId equals p.Id
             select new { p.ResourceType, p.Action })
             .Distinct()
@@ -725,3 +726,5 @@ public sealed class AuthService(
         return (communityIds, isSuperAdmin, roleNames, permissionCodes);
     }
 }
+
+

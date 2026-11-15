@@ -10,24 +10,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace App.Infrastructure.Identity;
 
-/// <summary>
-/// EF-backed <see cref="IUserService"/> (Req 3.1, 3.7). Create/edit/soft-delete/list users.
-///
-/// <para><b>Concurrency-safe uniqueness (Req 3.1).</b> Duplicate email/phone is NOT pre-checked
-/// with a read-then-write (which would race two concurrent creates past the gap); the write relies
-/// on the filtered unique indexes and translates a violation into a CONFLICT via
-/// <see cref="UniqueConstraintGuard"/>.</para>
-///
-/// <para><b>Security.</b> The password hash is a column only here (set at create from an
-/// already-hashed value supplied by Auth_Service, Task 5.2); it is never returned in a
-/// <see cref="UserDto"/> and never written to the audit detail (steering: never log secrets).</para>
-///
-/// <para><b>Audit (Req 6.1).</b> Create/edit/delete each append an <see cref="AuditEntry"/>
-/// recording the acting user (stamped by Audit_Service), the action and the user id — never the
-/// hash. <b>Soft-delete (Req 3.7):</b> delete archives the row (EF global filter + the audit
-/// interceptor turn Remove into a soft delete); it stays retrievable via
-/// <c>IgnoreQueryFilters</c> for audit.</para>
-/// </summary>
 public sealed class UserService(AppDbContext db, IAuditService audit, IPageSizePolicy pageSizePolicy, IAsyncQueryExecutor executor)
     : IUserService
 {
@@ -54,6 +36,7 @@ public sealed class UserService(AppDbContext db, IAuditService audit, IPageSizeP
             PasswordHash = request.PasswordHash,
             MfaEnabled = request.MfaEnabled,
             Status = UserStatus.Active,
+            Name = request.Name?.Trim(),
         };
         db.Users.Add(user);
 

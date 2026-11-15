@@ -9,6 +9,11 @@ public enum RoleSurface
     Both = 2,
 }
 
+public enum PowerRole
+{
+    CommunityAdmin = 3,
+    OrganizationAdmin = 2
+}
 public class Role : PlatformEntity
 {
     public string Name { get; set; } = string.Empty;

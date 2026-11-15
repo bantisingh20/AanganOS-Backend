@@ -78,7 +78,11 @@ public sealed record VisitorDto(
     bool IsAdmittable,
     string? QrToken = null,
     string? HostUnitNumber = null,
-    string? OrganizationName = null);
+    string? OrganizationName = null,
+    DateTime? CreatedAtUtc = null,
+    string? PassType = null,
+    string? PublicToken = null,
+    DateTime? ValidUntilUtc = null);
 
 public sealed record VerifyVisitPassResult(
     bool Accepted,
@@ -100,7 +104,8 @@ public sealed record CreateVisitPassRequest(
     int? NumberOfPersons = null,
     string? WhomToMeet = null,
     DateTime? VisitDateUtc = null,
-    Guid? PhotoFileId = null);
+    Guid? PhotoFileId = null,
+    string? PhotoBase64 = null);
 
 public sealed record VerifyVisitPassRequest(
     string? QrToken,
@@ -119,7 +124,8 @@ public sealed record RegisterWalkInRequest(
     string? IdProofNumber = null,
     string? Purpose = null,
     string? WhomToMeet = null,
-    int? ExpectedDurationMinutes = null);
+    int? ExpectedDurationMinutes = null,
+    string? PhotoBase64 = null);
 
 public sealed record RegisterWalkInResult(VisitorDto Visitor, bool AutoApproved, string? Otp);
 
@@ -196,7 +202,8 @@ public sealed record CreateRecurringVisitorRequest(
     DateTime EndDate,
     int? DailyStartMinutes,
     int? DailyEndMinutes,
-    Guid? PhotoFileId = null);
+    Guid? PhotoFileId = null,
+    string? PhotoBase64 = null);
 
 public sealed record EntryExitEventDto(
     Guid Id,
