@@ -13,9 +13,10 @@ namespace App.Api.Controllers;
 public sealed class MenuController(IMenuService menu) : ControllerBase
 {
     [HttpGet("api/v1/menu")]
-    public async Task<IActionResult> GetMenu(CancellationToken ct)
+    public async Task<IActionResult> GetMenu([FromQuery] string? surface, CancellationToken ct)
     {
-        var data = await menu.GetMenuAsync(ct);
+        MenuSurface? s = Enum.TryParse<MenuSurface>(surface, ignoreCase: true, out var parsed) ? parsed : null;
+        var data = await menu.GetMenuAsync(s, ct);
         return Ok(ApiResult<IReadOnlyList<MenuNodeDto>>.Ok(data, string.Empty));
     }
 

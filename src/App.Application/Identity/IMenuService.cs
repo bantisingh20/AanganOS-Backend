@@ -51,7 +51,7 @@ public sealed record UpdateMenuItemRequest(
 
 public interface IMenuService
 {
-    Task<IReadOnlyList<MenuNodeDto>> GetMenuAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<MenuNodeDto>> GetMenuAsync(MenuSurface? surface = null, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<MenuItemDto>> ListAllAsync(MenuSurface? surface, CancellationToken cancellationToken = default);
 

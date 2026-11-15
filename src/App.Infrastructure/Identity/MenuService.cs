@@ -127,7 +127,7 @@ public sealed class MenuService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<MenuNodeDto>> GetMenuAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<MenuNodeDto>> GetMenuAsync(MenuSurface? surface = null, CancellationToken cancellationToken = default)
     {
         if (!Guid.TryParse(tenant.UserId, out var userId))
         {
@@ -137,8 +137,13 @@ public sealed class MenuService(
         var isSuperAdmin = tenant.IsPlatformSuperAdmin;
 
         var surfaces = isSuperAdmin
-            ? new HashSet<MenuSurface> { MenuSurface.Admin }
+            ? new HashSet<MenuSurface> { MenuSurface.Admin, MenuSurface.App }
             : await ResolveSurfacesAsync(userId, cancellationToken);
+
+        if (surface is { } requestedSurface)
+        {
+            surfaces.IntersectWith([requestedSurface]);
+        }
 
         if (surfaces.Count == 0)
         {
@@ -160,11 +165,10 @@ public sealed class MenuService(
             ? null
             : (await effectivePermissions.GetEffectivePermissionsAsync(userId, tenant.AuthorizedCommunityIds, cancellationToken))
                 .Select(p => $"{p.ResourceType}:{(int)p.Action}")
-                .ToHashSet(StringComparer.Ordinal);
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // A menu item is visible when the caller holds ANY of its required (resource, action) grants.
-        // The resource is checked (not just the action), so visibility is accurate per resource and
-        // is driven entirely by the menu row + the role's permissions in the DB (no hardcoding).
+        // We match against RequiredPermissionResource, Key, and ResourceType (case-insensitive).
         bool HasPermission(MenuItem m)
         {
             var actions = ParseActions(m.RequiredPermissionActions);
@@ -176,7 +180,11 @@ public sealed class MenuService(
             {
                 return true;
             }
-            return actions.Any(a => grantedPairs.Contains($"{m.RequiredPermissionResource}:{a}"));
+            var res = m.RequiredPermissionResource.Trim();
+            var key = m.Key.Trim();
+            return actions.Any(a =>
+                grantedPairs.Contains($"{res}:{a}") ||
+                grantedPairs.Contains($"{key}:{a}"));
         }
 
         var byParent = items.ToLookup(m => m.ParentId);
@@ -206,16 +214,20 @@ public sealed class MenuService(
             from u in db.Users.AsNoTracking()
             where u.Id == userId && u.RoleId != null
             join r in db.Roles.AsNoTracking() on u.RoleId!.Value equals r.Id
-            select r.Surface).Distinct().ToListAsync(cancellationToken);
+            select new { r.Surface, r.Name }).Distinct().ToListAsync(cancellationToken);
 
         var surfaces = new HashSet<MenuSurface>();
         foreach (var rs in roleSurfaces)
         {
-            if (rs is RoleSurface.App or RoleSurface.Both)
+            var isAdministrative = rs.Surface == RoleSurface.Both ||
+                                   rs.Name.Contains("Admin", StringComparison.OrdinalIgnoreCase) ||
+                                   rs.Name.Contains("Super", StringComparison.OrdinalIgnoreCase);
+
+            if (isAdministrative || rs.Surface is RoleSurface.App or RoleSurface.Both)
             {
                 surfaces.Add(MenuSurface.App);
             }
-            if (rs is RoleSurface.Admin or RoleSurface.Both)
+            if (isAdministrative || rs.Surface is RoleSurface.Admin or RoleSurface.Both)
             {
                 surfaces.Add(MenuSurface.Admin);
             }
@@ -223,4 +235,3 @@ public sealed class MenuService(
         return surfaces;
     }
 }
-
