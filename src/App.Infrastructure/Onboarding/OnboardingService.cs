@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using System.Globalization;
 using App.Application.Abstractions;
 using App.Application.Auth;
@@ -10,7 +11,6 @@ using App.Domain.Community;
 using App.Domain.Identity;
 using App.Domain.Subscription;
 using App.Infrastructure.Persistence;
-using App.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -53,8 +53,8 @@ public sealed class OnboardingService(
         // --- Privileged, isolated provisioning scope (platform super-admin tenant context). ---
         var services = new ServiceCollection();
         services.AddInfrastructure(configuration);
-        services.RemoveAll<ITenantContext>();
-        services.AddScoped<ITenantContext, SuperAdminTenantContext>();
+        services.RemoveAll<CurrentUser>();
+        services.AddScoped(_ => CurrentUser.System);
 
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();

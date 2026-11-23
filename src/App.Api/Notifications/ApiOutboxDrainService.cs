@@ -1,9 +1,9 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Notifications;
 using App.Domain.Notifications;
 using App.Infrastructure;
 using App.Infrastructure.Persistence;
-using App.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -35,8 +35,8 @@ public sealed class ApiOutboxDrainService : BackgroundService
 
         var services = new ServiceCollection();
         services.AddInfrastructure(_configuration);
-        services.RemoveAll<ITenantContext>();
-        services.AddScoped<ITenantContext, SuperAdminTenantContext>();
+        services.RemoveAll<CurrentUser>();
+        services.AddScoped(_ => CurrentUser.System);
         _provider = services.BuildServiceProvider();
 
         var pollInterval = TimeSpan.FromSeconds(_workerOptions.PollIntervalSeconds);

@@ -12,7 +12,7 @@ public sealed class PermissionAuthorizationMiddleware(RequestDelegate next)
 
     public async Task InvokeAsync(
         HttpContext context,
-        ITenantContext tenant,
+        CurrentUser currentUser,
         IPermissionEvaluator permissionEvaluator)
     {
         var requirement = context.GetEndpoint()?.Metadata.GetMetadata<RequirePermissionAttribute>()?.Requirement;
@@ -32,13 +32,13 @@ public sealed class PermissionAuthorizationMiddleware(RequestDelegate next)
         // Permission (RBAC) checks disabled: role-based access is managed in the client layer.
         // Authentication is still enforced above. To re-enable, uncomment the block below.
         // var permitted = await permissionEvaluator.IsPermittedAsync(
-        //     tenant, requirement.Value, context.RequestAborted);
+        //     currentUser, requirement.Value, context.RequestAborted);
         //
         // if (!permitted)
         // {
         //     throw new ForbiddenException();
         // }
-        _ = tenant;
+        _ = currentUser;
         _ = permissionEvaluator;
 
         await _next(context);

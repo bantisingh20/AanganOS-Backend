@@ -23,4 +23,6 @@ public interface ISubscriptionService
         DateTime startsAtUtc,
         DateTime expiresAtUtc,
         CancellationToken cancellationToken = default);
+
+    Task <SubscriptionDto> BuildDtoAsync(Guid organizationId, CancellationToken cancellationToken = default);
 }

@@ -6,7 +6,7 @@ namespace App.Application.Abstractions.Security;
 /// with the real evaluator that computes the union of Role→Permission across the user's assigned
 /// UserRoles for the requested (Action, resourceType) (Req 4.1–4.3).
 ///
-/// The evaluator receives the already-authenticated <see cref="ITenantContext"/> (so it can scope
+/// The evaluator receives the already-authenticated <see cref="CurrentUser"/> (so it can scope
 /// the permission lookup to the acting user and their authorized communities) and the required
 /// permission the endpoint declared. It returns a decision only — it performs no state change and
 /// throws nothing; the pipeline turns a <c>false</c> into the FORBIDDEN envelope (Req 4.2).
@@ -19,7 +19,7 @@ public interface IPermissionEvaluator
     /// rejected earlier with UNAUTHENTICATED, Req 1.5).
     /// </summary>
     ValueTask<bool> IsPermittedAsync(
-        ITenantContext tenant,
+        CurrentUser currentUser,
         PermissionRequirement requirement,
         CancellationToken cancellationToken = default);
 }

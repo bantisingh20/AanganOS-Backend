@@ -8,6 +8,8 @@ public interface IResidentOnboardingService
     /// <summary>Anonymous: does a user already exist for this phone/email? Returns only a boolean.</summary>
     Task<bool> IdentifierExistsAsync(string identifier, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<PublicSocietytDto>> SearchSocietyAsync(string? search, CancellationToken cancellationToken = default);
+
     /// <summary>Anonymous: search communities by name (capped). Returns minimal fields.</summary>
     Task<IReadOnlyList<PublicCommunityDto>> SearchCommunitiesAsync(string? search, CancellationToken cancellationToken = default);
 
@@ -42,6 +44,7 @@ public interface IResidentOnboardingService
 
 /// <summary>Minimal public community row for the onboarding search (no org/internal fields).</summary>
 public sealed record PublicCommunityDto(Guid Id, string Name, string CommunityType);
+public sealed record PublicSocietytDto(Guid Id, string Name);
 
 /// <summary>A wing/block node for the onboarding picker.</summary>
 public sealed record PublicWingDto(Guid Id, string Name, string Level, Guid? ParentId);

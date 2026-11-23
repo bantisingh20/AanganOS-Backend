@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Notifications;
 using App.Application.Querying;
@@ -20,7 +21,7 @@ namespace App.Infrastructure.Notifications;
 /// global filter still applies on top (the row carries its originating community); combined, a user
 /// sees their own notifications across the communities they belong to. Reads use <c>AsNoTracking</c>.</para>
 /// </summary>
-public sealed class NotificationInboxService(AppDbContext db, ITenantContext tenantContext) : INotificationInboxService
+public sealed class NotificationInboxService(AppDbContext db, CurrentUser currentUser) : INotificationInboxService
 {
     public async Task<PagedData<NotificationInboxItemDto>> ListAsync(
         ListQueryParameters parameters,
@@ -139,7 +140,11 @@ public sealed class NotificationInboxService(AppDbContext db, ITenantContext ten
                 cancellationToken);
     }
 
-    private bool TryGetUserId(out Guid userId) => Guid.TryParse(tenantContext.UserId, out userId);
+    private bool TryGetUserId(out Guid userId)
+    {
+        userId = currentUser.UserId ?? Guid.Empty;
+        return currentUser.UserId is not null;
+    }
 
     private static PagedData<NotificationInboxItemDto> Empty(ListQueryParameters parameters) => new()
     {

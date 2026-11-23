@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Audit;
 using App.Application.Exceptions;
@@ -54,14 +55,14 @@ public sealed class IdentityRbacServiceTests : IDisposable
     {
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
-        var seedTenant = new TestTenantContext { IsPlatformSuperAdmin = true, UserId = "seed" };
+        var seedTenant = new CurrentUser { IsSuperAdmin = true, Actor = "seed" };
         using var ctx = NewContext(seedTenant, new FixedClock());
         ctx.Database.EnsureCreated();
     }
 
     public void Dispose() => _connection.Dispose();
 
-    private AppDbContext NewContext(ITenantContext tenant, IClock clock)
+    private AppDbContext NewContext(CurrentUser tenant, IClock clock)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlite(_connection)
@@ -71,22 +72,22 @@ public sealed class IdentityRbacServiceTests : IDisposable
     }
 
     // Super-admin context so platform-scoped entities aren't hidden by any filter and audit stamps a user.
-    private TestTenantContext Admin(string user) =>
-        new() { IsPlatformSuperAdmin = true, UserId = user, AuthorizedCommunityIds = [_communityA, _communityB] };
+    private CurrentUser Admin(string user) =>
+        new() { IsSuperAdmin = true, Actor = user, CommunityId = _communityA };
 
-    private AuditService Audit(AppDbContext ctx, ITenantContext tenant, IClock clock) =>
+    private AuditService Audit(AppDbContext ctx, CurrentUser tenant, IClock clock) =>
         new(ctx, tenant, clock, new StubPageSizePolicy(), _executor);
 
-    private UserService Users(AppDbContext ctx, ITenantContext tenant, IClock clock) =>
+    private UserService Users(AppDbContext ctx, CurrentUser tenant, IClock clock) =>
         new(ctx, Audit(ctx, tenant, clock), new StubPageSizePolicy(), _executor);
 
-    private RoleService Roles(AppDbContext ctx, ITenantContext tenant, IClock clock) =>
+    private RoleService Roles(AppDbContext ctx, CurrentUser tenant, IClock clock) =>
         new(ctx, Audit(ctx, tenant, clock), new StubPageSizePolicy(), _executor);
 
-    private UserRoleService Assignments(AppDbContext ctx, ITenantContext tenant, IClock clock) =>
+    private UserRoleService Assignments(AppDbContext ctx, CurrentUser tenant, IClock clock) =>
         new(ctx, Audit(ctx, tenant, clock));
 
-    private PermissionCatalog Catalog(AppDbContext ctx, ITenantContext tenant, IClock clock) =>
+    private PermissionCatalog Catalog(AppDbContext ctx, CurrentUser tenant, IClock clock) =>
         new(ctx, Audit(ctx, tenant, clock));
 
     private static EffectivePermissionQuery Effective(AppDbContext ctx) => new(ctx);

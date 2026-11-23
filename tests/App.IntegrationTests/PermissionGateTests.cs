@@ -23,7 +23,7 @@ public sealed class PermissionGateTests
     private sealed class DenyAllPermissionEvaluator : IPermissionEvaluator
     {
         public ValueTask<bool> IsPermittedAsync(
-            ITenantContext tenant, PermissionRequirement requirement, CancellationToken ct = default)
+            CurrentUser tenant, PermissionRequirement requirement, CancellationToken ct = default)
             => ValueTask.FromResult(false);
     }
 

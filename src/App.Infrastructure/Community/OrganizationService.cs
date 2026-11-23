@@ -4,6 +4,7 @@ using App.Application.Config;
 using App.Application.Exceptions;
 using App.Application.Notifications;
 using App.Application.Querying;
+using App.Application.Subscription;
 using App.Contracts.Envelope;
 using App.Domain.Community;
 using App.Domain.Identity;
@@ -20,6 +21,7 @@ public sealed class OrganizationService(
     IAsyncQueryExecutor executor,
     INotificationService notifications,
     IConfigService config,
+    ISubscriptionService subscription,
     ILogger<OrganizationService> logger) : IOrganizationService
 {
     private const string PortalUrlKey = "admin.portalUrl";
@@ -96,9 +98,7 @@ public sealed class OrganizationService(
         return org is null ? null : ToDto(org);
     }
 
-    public async Task<PagedData<OrganizationDto>> ListAsync(
-        ListQueryParameters parameters,
-        CancellationToken cancellationToken = default)
+    public async Task<PagedData<OrganizationDto>> ListAsync(ListQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
@@ -123,7 +123,8 @@ public sealed class OrganizationService(
             {
                 OrganizationId = g.Key,
                 CommunityCount = g.Select(x => x.Id).Distinct().Count(),
-                HasActiveAdmin = g.Any()
+                HasActiveAdmin = g.Any(),
+                ExpiryData = subscription.BuildDtoAsync(g.Key, cancellationToken).Result
             }
         ).ToListAsync(cancellationToken);
 
@@ -138,7 +139,9 @@ public sealed class OrganizationService(
                 return o with
                 {
                     HasActiveAdmin = org != null && org.HasActiveAdmin,
-                    CommunityCount = org?.CommunityCount ?? 0
+                    CommunityCount = org?.CommunityCount ?? 0,
+                    ExpiryData = org?.ExpiryData,
+
                 };
             }).ToList(),
             Page = paged.Page,
@@ -223,11 +226,7 @@ public sealed class OrganizationService(
         return ToDto(org) with { HasActiveAdmin = true };
     }
 
-    private async Task SendActivationNotificationsAsync(
-        Organization org,
-        List<(Guid Id, string Name)> communities,
-        List<User> activatedUsers, string SocietyName,
-        CancellationToken cancellationToken)
+    private async Task SendActivationNotificationsAsync(Organization org, List<(Guid Id, string Name)> communities, List<User> activatedUsers, string SocietyName, CancellationToken cancellationToken)
     {
         try
         {

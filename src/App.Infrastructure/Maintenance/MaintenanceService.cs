@@ -66,7 +66,7 @@ public sealed class MaintenanceService(
     IClock clock,
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IPageSizePolicy pageSizePolicy,
     IAsyncQueryExecutor executor)
     : IMaintenanceService
@@ -975,7 +975,7 @@ public sealed class MaintenanceService(
             WorkOrderId = request.WorkOrderId,
             Name = name,
             OverallResult = overallResult,
-            InspectedByUserId = tenant.UserId,
+            InspectedByUserId = currentUser.Actor,
             InspectedAtUtc = inspectedAt,
             Notes = Trimmed(request.Notes),
         };
@@ -1010,7 +1010,7 @@ public sealed class MaintenanceService(
             EventType = DomainEquipmentHistoryEventTypes.InspectionCompleted,
             Summary = name,
             Detail = $"result={overallResult}; items={inspection.Items.Count}",
-            ActingUserId = tenant.UserId,
+            ActingUserId = currentUser.Actor,
             OccurredAtUtc = inspectedAt,
         });
 
@@ -1351,7 +1351,7 @@ public sealed class MaintenanceService(
             Unit = unit,
             Value = request.Value,
             ReadingAtUtc = readingAt,
-            RecordedByUserId = tenant.UserId,
+            RecordedByUserId = currentUser.Actor,
             Notes = Trimmed(request.Notes),
         };
 
@@ -1367,7 +1367,7 @@ public sealed class MaintenanceService(
             EventType = DomainEquipmentHistoryEventTypes.MeterReadingRecorded,
             Summary = $"{meterType}: {request.Value} {unit}",
             Detail = string.IsNullOrWhiteSpace(reading.Notes) ? null : $"notes={reading.Notes}",
-            ActingUserId = tenant.UserId,
+            ActingUserId = currentUser.Actor,
             OccurredAtUtc = readingAt,
         });
 

@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Audit;
 using App.Application.Querying;
@@ -12,7 +13,7 @@ namespace App.Infrastructure.Audit;
 /// EF-backed Audit_Service (Req 6). The real append-only trail behind <see cref="IAuditService"/>.
 ///
 /// <para><b>Append (Req 6.1, 6.2).</b> <see cref="AppendAsync"/> is a single INSERT. The acting
-/// user comes from <see cref="ITenantContext.UserId"/> and the timestamp from <see cref="IClock"/>
+/// user comes from <see cref="CurrentUser.UserId"/> and the timestamp from <see cref="IClock"/>
 /// — never from the caller — so the trail records who/when authoritatively. There is no update or
 /// delete method; the <c>AuditSaveChangesInterceptor</c> additionally rejects any Modified/Deleted
 /// state on an <c>AuditLog</c> row, so the table is append-only end to end (Req 6.3).</para>
@@ -29,7 +30,7 @@ namespace App.Infrastructure.Audit;
 /// deleted, so a soft-deleted resource's entries remain fully queryable — nothing special is
 /// needed beyond keeping them out of any soft-delete filter.</para>
 /// </summary>
-public sealed class AuditService(AppDbContext db, ITenantContext tenant, IClock clock, IPageSizePolicy pageSizePolicy, IAsyncQueryExecutor executor)
+public sealed class AuditService(AppDbContext db, CurrentUser currentUser, IClock clock, IPageSizePolicy pageSizePolicy, IAsyncQueryExecutor executor)
     : IAuditService
 {
     // Allow-list of client-facing fields for the read endpoint. Declared once here (steering: no
@@ -57,7 +58,7 @@ public sealed class AuditService(AppDbContext db, ITenantContext tenant, IClock 
 
         db.AuditLogs.Add(new AuditLog
         {
-            ActingUserId = tenant.UserId,
+            ActingUserId = currentUser.Actor,
             Action = entry.Action,
             ResourceType = entry.ResourceType,
             ResourceId = entry.ResourceId,
@@ -78,9 +79,9 @@ public sealed class AuditService(AppDbContext db, ITenantContext tenant, IClock 
         // Tenant scoping (Req 6.5): super admin sees all; a community admin sees only their
         // authorized communities. Filtered in the database, never in memory.
         IQueryable<AuditLog> source = db.AuditLogs.AsNoTracking();
-        if (!tenant.IsPlatformSuperAdmin)
+        if (!currentUser.IsSuperAdmin)
         {
-            var authorized = tenant.AuthorizedCommunityIds;
+            var authorized = currentUser.AccessibleCommunityIds;
             source = source.Where(a => a.CommunityId != null && authorized.Contains(a.CommunityId.Value));
         }
 

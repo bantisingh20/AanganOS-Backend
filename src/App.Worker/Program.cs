@@ -1,6 +1,6 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Infrastructure;
-using App.Infrastructure.Tenancy;
 using App.Worker;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -8,8 +8,8 @@ var builder = Host.CreateApplicationBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
-builder.Services.RemoveAll<ITenantContext>();
-builder.Services.AddScoped<ITenantContext, SuperAdminTenantContext>();
+builder.Services.RemoveAll<CurrentUser>();
+builder.Services.AddScoped(_ => CurrentUser.System);
 
 builder.Services.AddHostedService<OutboxWorkerService>();
 builder.Services.AddHostedService<App.Infrastructure.Messaging.MessageOutboxDrainService>();

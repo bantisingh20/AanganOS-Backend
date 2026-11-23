@@ -48,7 +48,8 @@ public sealed class HelpdeskService(
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
     IPageSizePolicy pageSizePolicy,
-    IAsyncQueryExecutor executor)
+    IAsyncQueryExecutor executor,
+    CurrentUser currentUser)
     : IHelpdeskService
 {
     // Allow-list for the Task 21.4 ticket list endpoint (Req 32.4). Only these fields reach the query
@@ -129,7 +130,20 @@ public sealed class HelpdeskService(
         // community and run the own-unit check. The resident self-scope filter (if the caller is a
         // resident) already restricts this read to their own unit, so a cross-unit host → not found
         // (the resident-raises-for-own-unit rule, Req 32.1, 32.4).
-        var communityId = await RequireHostUnitCommunityAsync(request.HostUnitId, cancellationToken);
+        // Unit: from the request, else the logged-in user's own unit (session).
+        var hostUnitId = request.HostUnitId ?? currentUser.UnitId
+            ?? throw new ValidationException("hostUnitId", "Select a unit: you are not linked to a unit, so hostUnitId is required.");
+
+        // Community: the ticket always belongs to the unit's community.
+        // - communityId passed in the request -> must match the unit.
+        // - not passed -> session community rules apply (EnsureCommunityAuthorized: own community,
+        //   or any community of the organization for an organization admin).
+        var communityId = await RequireHostUnitCommunityAsync(hostUnitId, cancellationToken);
+        if (request.CommunityId is { } requested && requested != communityId)
+        {
+            throw new ValidationException("communityId", "The unit does not belong to the selected community.");
+        }
+
         authorizationGuard.EnsureCommunityAuthorized(communityId);
 
         var category = await RequireValidCodeAsync(
@@ -154,7 +168,7 @@ public sealed class HelpdeskService(
         var ticket = new DomainTicket
         {
             CommunityId = communityId,
-            HostUnitId = request.HostUnitId,
+            HostUnitId = hostUnitId,
             Title = title,
             Description = description,
             Category = category,
@@ -767,8 +781,19 @@ public sealed class HelpdeskService(
         var allowed = await config.GetMasterDataAsync(MasterDataKeys.TicketStatusTransition, communityId, cancellationToken: cancellationToken);
         if (!allowed.Any(e => string.Equals(e.Code, pair, StringComparison.Ordinal)))
         {
+            // Tell the caller where the ticket CAN go from its current status.
+            var next = allowed
+                .Select(e => e.Code.Split("->"))
+                .Where(p => p.Length == 2 && p[0] == from && p[1] != from)
+                .Select(p => p[1])
+                .Distinct()
+                .ToList();
+            var hint = next.Count > 0
+                ? $" Allowed next status: {string.Join(", ", next)}."
+                : " No further status change is allowed.";
+
             throw new ValidationException(
-                "status", $"A ticket cannot move from '{from}' to '{to}'; the transition is not allowed.");
+                "toStatus", $"A ticket cannot move from '{from}' to '{to}'.{hint}");
         }
     }
 

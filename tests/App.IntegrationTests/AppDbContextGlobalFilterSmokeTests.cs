@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Domain.Tenancy;
 using App.Infrastructure.Persistence;
@@ -32,7 +33,7 @@ public sealed class AppDbContextGlobalFilterSmokeTests : IDisposable
 
     public void Dispose() => _connection.Dispose();
 
-    private AppDbContext NewContext(ITenantContext tenant)
+    private AppDbContext NewContext(CurrentUser tenant)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlite(_connection)
@@ -44,7 +45,7 @@ public sealed class AppDbContextGlobalFilterSmokeTests : IDisposable
     [Fact]
     public async Task Context_constructs_and_creates_schema()
     {
-        var ctx = NewContext(new TestTenantContext());
+        var ctx = NewContext(new CurrentUser());
         var created = await ctx.Database.EnsureCreatedAsync();
         Assert.True(created);
     }
@@ -56,7 +57,7 @@ public sealed class AppDbContextGlobalFilterSmokeTests : IDisposable
         var communityB = Guid.NewGuid();
 
         // Seed as super admin so inserts aren't themselves filtered.
-        var seedCtx = NewContext(new TestTenantContext { IsPlatformSuperAdmin = true });
+        var seedCtx = NewContext(new CurrentUser { IsSuperAdmin = true });
         await seedCtx.Database.EnsureCreatedAsync();
         seedCtx.SampleTenantRecords.AddRange(
             new SampleTenantRecord { CommunityId = communityA, Name = "A-live" },
@@ -65,20 +66,20 @@ public sealed class AppDbContextGlobalFilterSmokeTests : IDisposable
         await seedCtx.SaveChangesAsync();
 
         // A tenant-A user: sees only A's live row. Foreign tenant + soft-deleted are gone.
-        var ctxA = NewContext(new TestTenantContext { AuthorizedCommunityIds = [communityA] });
+        var ctxA = NewContext(new CurrentUser { CommunityId = communityA });
         var namesA = await ctxA.SampleTenantRecords.AsNoTracking()
             .Select(r => r.Name).ToListAsync();
         Assert.Equal(["A-live"], namesA);
 
         // A different context (same cached model) scoped to B sees only B — proves the filter
         // reads the *current* tenant context per request, not a stale instance baked into the model.
-        var ctxB = NewContext(new TestTenantContext { AuthorizedCommunityIds = [communityB] });
+        var ctxB = NewContext(new CurrentUser { CommunityId = communityB });
         var namesB = await ctxB.SampleTenantRecords.AsNoTracking()
             .Select(r => r.Name).ToListAsync();
         Assert.Equal(["B-live"], namesB);
 
         // Super admin short-circuit: sees both live rows across tenants, still excludes soft-deleted.
-        var ctxAdmin = NewContext(new TestTenantContext { IsPlatformSuperAdmin = true });
+        var ctxAdmin = NewContext(new CurrentUser { IsSuperAdmin = true });
         var adminNames = await ctxAdmin.SampleTenantRecords.AsNoTracking()
             .Select(r => r.Name).OrderBy(n => n).ToListAsync();
         Assert.Equal(["A-live", "B-live"], adminNames);
@@ -91,18 +92,18 @@ public sealed class AppDbContextGlobalFilterSmokeTests : IDisposable
         var myUnit = Guid.NewGuid();
         var otherUnit = Guid.NewGuid();
 
-        var seedCtx = NewContext(new TestTenantContext { IsPlatformSuperAdmin = true });
+        var seedCtx = NewContext(new CurrentUser { IsSuperAdmin = true });
         await seedCtx.Database.EnsureCreatedAsync();
         seedCtx.SampleTenantRecords.AddRange(
             new SampleTenantRecord { CommunityId = community, UnitId = myUnit, Name = "mine" },
             new SampleTenantRecord { CommunityId = community, UnitId = otherUnit, Name = "neighbour" });
         await seedCtx.SaveChangesAsync();
 
-        var resident = new TestTenantContext
+        var resident = new CurrentUser
         {
-            AuthorizedCommunityIds = [community],
-            IsResidentSelfScoped = true,
-            ResidentUnitId = myUnit,
+            CommunityId = community,
+            IsResident = true,
+            UnitId = myUnit,
         };
         var ctx = NewContext(resident);
         var names = await ctx.SampleTenantRecords.AsNoTracking().Select(r => r.Name).ToListAsync();
@@ -113,7 +114,7 @@ public sealed class AppDbContextGlobalFilterSmokeTests : IDisposable
     public async Task Soft_delete_interceptor_sets_flag_instead_of_removing_row()
     {
         var community = Guid.NewGuid();
-        var admin = new TestTenantContext { IsPlatformSuperAdmin = true, UserId = "tester" };
+        var admin = new CurrentUser { IsSuperAdmin = true, Actor = "tester" };
 
         var ctx = NewContext(admin);
         await ctx.Database.EnsureCreatedAsync();

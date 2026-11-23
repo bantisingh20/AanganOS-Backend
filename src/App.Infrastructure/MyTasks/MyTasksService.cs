@@ -17,7 +17,7 @@ namespace App.Infrastructure.MyTasks;
 
 public sealed class MyTasksService(
     AppDbContext db,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IAuthorizationGuard authorizationGuard,
     IConfigService config,
     IClock clock)
@@ -26,7 +26,7 @@ public sealed class MyTasksService(
     public async Task<IReadOnlyList<MyTaskSummaryItem>> GetSummaryAsync(CancellationToken cancellationToken = default)
     {
         var items = new List<MyTaskSummaryItem>();
-        var isResident = tenant.IsResidentSelfScoped;
+        var isResident = currentUser.IsResident;
 
         if (isResident)
         {
@@ -127,7 +127,7 @@ public sealed class MyTasksService(
     {
         var cards = new List<MyTaskCard>();
         var all = string.IsNullOrWhiteSpace(type) || string.Equals(type, "all", StringComparison.OrdinalIgnoreCase);
-        var isResident = tenant.IsResidentSelfScoped;
+        var isResident = currentUser.IsResident;
 
         bool want(string t) => all || string.Equals(type, t, StringComparison.OrdinalIgnoreCase);
 
@@ -282,7 +282,7 @@ public sealed class MyTasksService(
 
     private async Task<int> MyKycPendingCountAsync(CancellationToken cancellationToken)
     {
-        if (!Guid.TryParse(tenant.UserId, out var userId))
+        if (currentUser.UserId is not { } userId)
         {
             return 0;
         }

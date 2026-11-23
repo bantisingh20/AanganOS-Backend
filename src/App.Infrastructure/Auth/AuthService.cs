@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Globalization;
 using System.Security.Cryptography;
 using App.Application.Abstractions;
+using App.Application.Abstractions.Security;
 using App.Application.Audit;
 using App.Application.Auth;
 using App.Application.Config;
@@ -21,7 +22,7 @@ namespace App.Infrastructure.Auth;
 public sealed class AuthService(
     AppDbContext db,
     IPasswordHasher passwordHasher,
-    IAuthTokenIssuer tokenIssuer,
+    JwtTokenIssuer tokenIssuer,
     IOtpDeliverer otpDeliverer,
     IOtpGenerator otpGenerator,
     IAuditService audit,
@@ -85,16 +86,22 @@ public sealed class AuthService(
             ? (false, (Guid?)null)
             : await ResolveResidentScopeAsync(userId, cancellationToken);
 
-        var organizationId = await ResolveOrganizationIdAsync(communityIds, cancellationToken);
+        var organizationId = await ResolveOrganizationIdAsync(userId, communityIds, cancellationToken);
+
+        var (residentId, residentType) = isSuperAdmin
+            ? ((Guid?)null, (string?)null)
+            : await ResolveResidentProfileAsync(userId, cancellationToken);
 
         await EnforceSubscriptionGateAsync(isSuperAdmin, roleNames, organizationId, cancellationToken);
 
         var issued = tokenIssuer.Issue(new TokenIssueRequest(
-            userId, communityIds, isSuperAdmin, roleNames,
+            userId, communityIds.Count > 0 ? communityIds.First() : null, isSuperAdmin, roleNames,
             Permissions: permissions,
             IsResidentSelfScoped: isResidentSelfScoped,
             ResidentUnitId: residentUnitId,
-            OrganizationId: organizationId));
+            OrganizationId: organizationId,
+            ResidentId: residentId,
+            ResidentType: residentType));
 
         await EnforceSingleActiveSessionAsync(userId, communityIds, request, cancellationToken);
 
@@ -210,16 +217,22 @@ public sealed class AuthService(
             ? (false, (Guid?)null)
             : await ResolveResidentScopeAsync(user.Id, cancellationToken);
 
-        var organizationId = await ResolveOrganizationIdAsync(communityIds, cancellationToken);
+        var organizationId = await ResolveOrganizationIdAsync(user.Id, communityIds, cancellationToken);
+
+        var (residentId, residentType) = isSuperAdmin
+            ? ((Guid?)null, (string?)null)
+            : await ResolveResidentProfileAsync(user.Id, cancellationToken);
 
         await EnforceSubscriptionGateAsync(isSuperAdmin, roleNames, organizationId, cancellationToken);
 
         var issued = tokenIssuer.Issue(new TokenIssueRequest(
-            user.Id, communityIds, isSuperAdmin, roleNames,
+            user.Id, communityIds.Count > 0 ? communityIds.First() : null, isSuperAdmin, roleNames,
             Permissions: permissions,
             IsResidentSelfScoped: isResidentSelfScoped,
             ResidentUnitId: residentUnitId,
-            OrganizationId: organizationId));
+            OrganizationId: organizationId,
+            ResidentId: residentId,
+            ResidentType: residentType));
 
         session.TokenId = issued.TokenId;
         session.IssuedAtUtc = issued.IssuedAtUtc;
@@ -277,19 +290,56 @@ public sealed class AuthService(
 
         var newPlayerId = request.OneSignalPlayerId?.Trim();
 
-        var activeDevices = await db.Set<Device>()
-            .Where(d => d.UserId == userId && d.IsActive)
-            .ToListAsync(cancellationToken);
+        // The app did not say which device this is (it registers it via POST /devices right after
+        // login). We can't tell "same phone" from "other phone" yet, so don't push "signed out" now -
+        // RegisterDeviceAsync does it once the device is known, skipping this same device.
+        if (string.IsNullOrEmpty(newPlayerId))
+        {
+            return;
+        }
 
         var communityId = communityIds.Count > 0 ? communityIds.First() : (Guid?)null;
-        foreach (var device in activeDevices)
-        {
-            var isSameDevice = !string.IsNullOrEmpty(newPlayerId) && device.OneSignalPlayerId == newPlayerId;
-            if (isSameDevice)
-            {
-                continue;
-            }
+        await SignOutOtherDevicesAsync(userId, newPlayerId, communityId, now, cancellationToken);
 
+        // Save / reactivate this device as the user's active one.
+        var platform = ParsePlatform(request.Platform);
+        var existing = await db.Set<Device>()
+            .FirstOrDefaultAsync(d => d.OneSignalPlayerId == newPlayerId, cancellationToken);
+        if (existing is null)
+        {
+            db.Set<Device>().Add(new Device
+            {
+                UserId = userId,
+                Platform = platform,
+                OneSignalPlayerId = newPlayerId,
+                IsActive = true,
+                LastSeenUtc = now,
+            });
+        }
+        else
+        {
+            // Re-point the target to this user (e.g. a shared device) and reactivate it.
+            existing.UserId = userId;
+            existing.Platform = platform;
+            existing.IsActive = true;
+            existing.LastSeenUtc = now;
+        }
+    }
+
+    /// <summary>
+    /// Single active device: deactivate every other active device of the user and push them
+    /// "you've been signed out". The current device (<paramref name="currentPlayerId"/>) is skipped,
+    /// so logging in again on the same phone never shows that notification.
+    /// </summary>
+    private async Task SignOutOtherDevicesAsync(
+        Guid userId, string currentPlayerId, Guid? communityId, DateTime now, CancellationToken cancellationToken)
+    {
+        var otherDevices = await db.Set<Device>()
+            .Where(d => d.UserId == userId && d.IsActive && d.OneSignalPlayerId != currentPlayerId)
+            .ToListAsync(cancellationToken);
+
+        foreach (var device in otherDevices)
+        {
             if (communityId is { } cid && !string.IsNullOrEmpty(device.OneSignalPlayerId))
             {
                 await notifications.EnqueueAsync(
@@ -303,32 +353,6 @@ public sealed class AuthService(
 
             device.IsActive = false;
             device.LastSeenUtc = now;
-        }
-
-        if (!string.IsNullOrEmpty(newPlayerId))
-        {
-            var platform = ParsePlatform(request.Platform);
-            var existing = await db.Set<Device>()
-                .FirstOrDefaultAsync(d => d.OneSignalPlayerId == newPlayerId, cancellationToken);
-            if (existing is null)
-            {
-                db.Set<Device>().Add(new Device
-                {
-                    UserId = userId,
-                    Platform = platform,
-                    OneSignalPlayerId = newPlayerId,
-                    IsActive = true,
-                    LastSeenUtc = now,
-                });
-            }
-            else
-            {
-                // Re-point the target to this user (e.g. a shared device) and reactivate it.
-                existing.UserId = userId;
-                existing.Platform = platform;
-                existing.IsActive = true;
-                existing.LastSeenUtc = now;
-            }
         }
     }
 
@@ -355,6 +379,13 @@ public sealed class AuthService(
 
         var now = clock.UtcNow;
         var devicePlatform = ParsePlatform(platform);
+
+        // Now the device is known: push "signed out" only to the user's OTHER active devices.
+        var communityId = await db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.CommunityId)
+            .FirstOrDefaultAsync(cancellationToken);
+        await SignOutOtherDevicesAsync(userId, playerId, communityId, now, cancellationToken);
 
         var existing = await db.Set<Device>()
             .FirstOrDefaultAsync(d => d.OneSignalPlayerId == playerId, cancellationToken);
@@ -626,6 +657,21 @@ public sealed class AuthService(
         return unitId is { } u ? (true, u) : (false, (Guid?)null);
     }
 
+    /// <summary>
+    /// The user's Resident record (id + resident type, e.g. owner / tenant / security), put into the
+    /// token so <c>CurrentUser</c> has them without a DB read per request. (null, null) for admins/staff.
+    /// </summary>
+    private async Task<(Guid? ResidentId, string? ResidentType)> ResolveResidentProfileAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var resident = await db.Residents.AsNoTracking().IgnoreQueryFilters()
+            .Where(r => r.UserId == userId && !r.IsDeleted)
+            .OrderBy(r => r.CreatedAtUtc)
+            .Select(r => new { r.Id, r.ResidentType })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return resident is null ? (null, null) : (resident.Id, resident.ResidentType);
+    }
+
     private async Task EnforceSubscriptionGateAsync(
         bool isSuperAdmin,
         IReadOnlyCollection<string> roleNames,
@@ -648,8 +694,19 @@ public sealed class AuthService(
             string.Equals(name, "PowerUser", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("Admin", StringComparison.OrdinalIgnoreCase));
 
-    private async Task<Guid?> ResolveOrganizationIdAsync(IReadOnlyCollection<Guid> communityIds, CancellationToken cancellationToken)
+    private async Task<Guid?> ResolveOrganizationIdAsync(Guid userId, IReadOnlyCollection<Guid> communityIds, CancellationToken cancellationToken)
     {
+        // The user's own organization first (an org admin may have no community row yet) ...
+        var userOrg = await db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.OrganizationId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (userOrg is { } org && org != Guid.Empty)
+        {
+            return org;
+        }
+
+        // ... else the organization of their default community.
         if (communityIds.Count == 0)
         {
             return null;
@@ -680,26 +737,20 @@ public sealed class AuthService(
             communityList.Add(user.CommunityId.Value);
         }
 
-        var isOrgAdmin = string.Equals(user.Role.Name, "OrganizationAdmin", StringComparison.OrdinalIgnoreCase);
-        if (isOrgAdmin)
+        // ONE default community per user (Users.CommunityId). An organization admin's access to the
+        // other communities of the organization is decided by role on every request (AuthSetup),
+        // not stored in the token or the DB. If an org admin has no default yet, use the org's first.
+        var isOrgAdmin = string.Equals(user.Role.Name, CurrentUser.OrganizationAdminRole, StringComparison.OrdinalIgnoreCase);
+        if (isOrgAdmin && communityList.Count == 0 && user.OrganizationId is { } orgId && orgId != Guid.Empty)
         {
-            var orgId = user.OrganizationId;
-            if (!orgId.HasValue && user.CommunityId.HasValue)
+            var firstCommunity = await db.Communities.IgnoreQueryFilters().AsNoTracking()
+                .Where(c => c.OrganizationId == orgId && !c.IsDeleted)
+                .OrderBy(c => c.CreatedAtUtc)
+                .Select(c => (Guid?)c.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (firstCommunity is { } fc)
             {
-                orgId = await db.Communities.IgnoreQueryFilters().AsNoTracking()
-                    .Where(c => c.Id == user.CommunityId.Value)
-                    .Select(c => (Guid?)c.OrganizationId)
-                    .FirstOrDefaultAsync(cancellationToken);
-            }
-
-            if (orgId.HasValue && orgId.Value != Guid.Empty)
-            {
-                var allOrgCommunityIds = await db.Communities.IgnoreQueryFilters().AsNoTracking()
-                    .Where(c => c.OrganizationId == orgId.Value && !c.IsDeleted)
-                    .Select(c => c.Id)
-                    .ToListAsync(cancellationToken);
-
-                communityList = communityList.Union(allOrgCommunityIds).Distinct().ToList();
+                communityList.Add(fc);
             }
         }
 

@@ -52,7 +52,7 @@ public sealed class AmenityService(
     IClock clock,
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IPageSizePolicy pageSizePolicy,
     IAsyncQueryExecutor executor)
     : IAmenityService
@@ -1357,7 +1357,7 @@ public sealed class AmenityService(
 
     /// <summary>Parse the acting user id (from the tenant context) into a nullable Guid; a system/anonymous actor → null.</summary>
     private Guid? ParseActingUserId() =>
-        Guid.TryParse(tenant.UserId, out var id) ? id : null;
+        currentUser.UserId;
 
     // =============================================================================================
     // Helpers.

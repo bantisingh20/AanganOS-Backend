@@ -153,11 +153,16 @@ public sealed record AddTicketCommentRequest(string Body);
 /// <param name="Subcategory">Optional ticket-subcategory code from the Ticket_Subcategory list.</param>
 /// <param name="Priority">Optional ticket-priority code from the Ticket_Priority list; defaults to the configured community default when omitted.</param>
 /// <param name="AttachmentFileIds">Optional File_Service references (photo/video/document) to associate with the ticket (Req 32.3).</param>
+/// <summary>
+/// Raise a ticket. <paramref name="HostUnitId"/> and <paramref name="CommunityId"/> are optional:
+/// when omitted they come from the logged-in user (CurrentUser.UnitId / CurrentUser.CommunityId).
+/// </summary>
 public sealed record CreateTicketRequest(
-    Guid HostUnitId,
+    Guid? HostUnitId,
     string Title,
     string Description,
     string Category,
     string? Subcategory,
     string? Priority,
-    IReadOnlyList<Guid>? AttachmentFileIds);
+    IReadOnlyList<Guid>? AttachmentFileIds,
+    Guid? CommunityId = null);

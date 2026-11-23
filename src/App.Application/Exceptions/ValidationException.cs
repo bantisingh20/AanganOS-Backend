@@ -9,7 +9,10 @@ namespace App.Application.Exceptions;
 public sealed class ValidationException : AppException
 {
     public ValidationException(IReadOnlyList<FieldError> fieldErrors, string? message = null)
-        : base(ErrorCode.ValidationError, message ?? "One or more fields are invalid.")
+        // One field error -> show its reason as the main message (e.g. "A ticket cannot move from
+        // 'assigned' to 'new'..."), so the client never sees only the generic text.
+        : base(ErrorCode.ValidationError,
+            message ?? (fieldErrors is { Count: 1 } ? fieldErrors[0].Reason : "One or more fields are invalid."))
     {
         _fieldErrors = fieldErrors ?? [];
     }

@@ -42,7 +42,7 @@ public sealed class AuthServiceTests : IDisposable
     private readonly IPasswordHasher _hasher = new PasswordHasherAdapter();
     private readonly CapturingOtpDeliverer _deliverer = new();
     private readonly PassthroughConfig _config = new();
-    private readonly IAuthTokenIssuer _issuer;
+    private readonly JwtTokenIssuer _issuer;
 
     private static readonly AuthOptions Options = new()
     {
@@ -113,8 +113,8 @@ public sealed class AuthServiceTests : IDisposable
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
 
-        _issuer = new JwtAuthTokenIssuer(
-            Microsoft.Extensions.Options.Options.Create(new JwtIssuerOptions
+        _issuer = new JwtTokenIssuer(
+            Microsoft.Extensions.Options.Options.Create(new JwtSettings
             {
                 Issuer = Issuer,
                 Audience = Audience,
@@ -123,14 +123,14 @@ public sealed class AuthServiceTests : IDisposable
             Microsoft.Extensions.Options.Options.Create(Options),
             _clock);
 
-        var seedTenant = new TestTenantContext { IsPlatformSuperAdmin = true, UserId = "seed" };
+        var seedTenant = new CurrentUser { IsSuperAdmin = true, Actor = "seed" };
         using var ctx = NewContext(seedTenant);
         ctx.Database.EnsureCreated();
     }
 
     public void Dispose() => _connection.Dispose();
 
-    private AppDbContext NewContext(ITenantContext tenant)
+    private AppDbContext NewContext(CurrentUser tenant)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlite(_connection)
@@ -139,10 +139,10 @@ public sealed class AuthServiceTests : IDisposable
         return new AppDbContext(options, tenant);
     }
 
-    private TestTenantContext System() =>
-        new() { IsPlatformSuperAdmin = true, UserId = "system", AuthorizedCommunityIds = [_communityA] };
+    private CurrentUser System() =>
+        new() { IsSuperAdmin = true, Actor = "system", CommunityId = _communityA };
 
-    private AuthService NewAuth(AppDbContext ctx, ITenantContext tenant)
+    private AuthService NewAuth(AppDbContext ctx, CurrentUser tenant)
     {
         var audit = new AuditService(ctx, tenant, _clock, new StubPageSizePolicy(), new EfAsyncQueryExecutor());
         return new AuthService(
@@ -214,9 +214,9 @@ public sealed class AuthServiceTests : IDisposable
 
         var jwt = ReadToken(result.AccessToken);
         Assert.Equal(Issuer, jwt.Issuer);
-        Assert.Equal(user.Id.ToString(), jwt.Claims.Single(c => c.Type == CommunityClaimTypes.UserId).Value);
-        Assert.Equal(_communityA.ToString(), jwt.Claims.Single(c => c.Type == CommunityClaimTypes.CommunityId).Value);
-        Assert.Equal("false", jwt.Claims.Single(c => c.Type == CommunityClaimTypes.IsPlatformSuperAdmin).Value);
+        Assert.Equal(user.Id.ToString(), jwt.Claims.Single(c => c.Type == ClaimNames.UserId).Value);
+        Assert.Equal(_communityA.ToString(), jwt.Claims.Single(c => c.Type == ClaimNames.CommunityId).Value);
+        Assert.Equal("false", jwt.Claims.Single(c => c.Type == ClaimNames.IsSuperAdmin).Value);
         Assert.Contains(jwt.Claims, c => c.Type == ClaimTypes.Role && c.Value == "CommunityManager");
         var jti = jwt.Claims.Single(c => c.Type == JwtRegisteredClaimNames.Jti).Value;
 
@@ -236,7 +236,7 @@ public sealed class AuthServiceTests : IDisposable
         var result = await NewAuth(ctx, tenant).LoginAsync(new LoginRequest("root@x.com", "Correct!123"));
 
         var jwt = ReadToken(result.AccessToken);
-        Assert.Equal("true", jwt.Claims.Single(c => c.Type == CommunityClaimTypes.IsPlatformSuperAdmin).Value);
+        Assert.Equal("true", jwt.Claims.Single(c => c.Type == ClaimNames.IsSuperAdmin).Value);
     }
 
     [Fact]
@@ -265,12 +265,12 @@ public sealed class AuthServiceTests : IDisposable
         var result = await auth.LoginAsync(new LoginRequest("carol@x.com", "Correct!123"));
         var jti = ReadToken(result.AccessToken).Claims.Single(c => c.Type == JwtRegisteredClaimNames.Jti).Value;
 
-        var store = new SessionRevocationStore(ctx);
-        Assert.True(await store.IsSessionActiveAsync(jti)); // active before logout
+        async Task<bool> IsActive(string id) => await ctx.LoginSessions.AnyAsync(s => s.TokenId == id && s.RevokedAtUtc == null);
+        Assert.True(await IsActive(jti)); // active before logout
 
         await auth.LogoutAsync(jti);
 
-        Assert.False(await store.IsSessionActiveAsync(jti)); // revoked → bearer validation rejects it (Req 1.3)
+        Assert.False(await IsActive(jti)); // revoked → bearer validation rejects it (Req 1.3)
     }
 
     [Fact]

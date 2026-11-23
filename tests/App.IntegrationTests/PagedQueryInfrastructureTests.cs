@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Exceptions;
 using App.Application.Querying;
@@ -54,7 +55,7 @@ public sealed class PagedQueryInfrastructureTests : IDisposable
 
     private AppDbContext NewContext()
     {
-        var tenant = new TestTenantContext { AuthorizedCommunityIds = [_community] };
+        var tenant = new CurrentUser { CommunityId = _community };
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlite(_connection)
             .AddInterceptors(new AuditSaveChangesInterceptor(tenant, new FixedClock()))
@@ -64,7 +65,7 @@ public sealed class PagedQueryInfrastructureTests : IDisposable
 
     private async Task SeedAsync()
     {
-        var seedTenant = new TestTenantContext { IsPlatformSuperAdmin = true };
+        var seedTenant = new CurrentUser { IsSuperAdmin = true };
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlite(_connection)
             .AddInterceptors(new AuditSaveChangesInterceptor(seedTenant, new FixedClock()))

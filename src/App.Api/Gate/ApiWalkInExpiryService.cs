@@ -1,7 +1,7 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Gate;
 using App.Infrastructure;
-using App.Infrastructure.Tenancy;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace App.Api.Gate;
@@ -26,8 +26,8 @@ public sealed class ApiWalkInExpiryService : BackgroundService
     {
         var services = new ServiceCollection();
         services.AddInfrastructure(_configuration);
-        services.RemoveAll<ITenantContext>();
-        services.AddScoped<ITenantContext, SuperAdminTenantContext>();
+        services.RemoveAll<CurrentUser>();
+        services.AddScoped(_ => CurrentUser.System);
         _provider = services.BuildServiceProvider();
 
         var pollInterval = TimeSpan.FromSeconds(PollIntervalSeconds);

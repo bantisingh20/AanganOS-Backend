@@ -20,7 +20,7 @@ public sealed class ResidentOnboardingService(
     IPasswordHasher passwordHasher,
     IOtpGenerator otpGenerator,
     AppDbContext db,
-    ITenantContext tenantContext,
+    CurrentUser currentUser,
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
     IConfigService config,
@@ -48,6 +48,18 @@ public sealed class ResidentOnboardingService(
             .AnyAsync(u => u.Email == id || u.Phone == id, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<PublicSocietytDto>> SearchSocietyAsync(string? search, CancellationToken cancellationToken = default)
+    {
+        // Anonymous caller: bypass the tenant filter with IgnoreQueryFilters (soft-delete still
+        // applied explicitly) so the public picker can see communities. Minimal fields, capped.
+        var term = (search ?? string.Empty).Trim();
+        var q = db.Organizations.IgnoreQueryFilters().AsNoTracking().Where(c => !c.IsDeleted);
+        if (term.Length > 0) q = q.Where(c => c.Name.Contains(term));
+        return await q.OrderBy(c => c.Name)
+            .Take(MaxSearchResults)
+            .Select(c => new PublicSocietytDto(c.Id, c.Name))
+            .ToListAsync(cancellationToken);
+    }
     public async Task<IReadOnlyList<PublicCommunityDto>> SearchCommunitiesAsync(string? search, CancellationToken cancellationToken = default)
     {
         // Anonymous caller: bypass the tenant filter with IgnoreQueryFilters (soft-delete still
@@ -60,6 +72,8 @@ public sealed class ResidentOnboardingService(
             .Select(c => new PublicCommunityDto(c.Id, c.Name, c.CommunityType))
             .ToListAsync(cancellationToken);
     }
+
+
 
     public async Task<IReadOnlyList<PublicWingDto>> ListWingsAsync(Guid communityId, CancellationToken cancellationToken = default)
     {
@@ -382,7 +396,7 @@ public sealed class ResidentOnboardingService(
         // User role set on user directly
 
         req.Status = ResidentJoinRequestStatuses.Approved;
-        req.DecidedBy = tenantContext.UserId;
+        req.DecidedBy = currentUser.Actor;
         req.DecidedAtUtc = DateTime.UtcNow;
         req.CreatedResidentId = resident.Id;
 
@@ -416,7 +430,7 @@ public sealed class ResidentOnboardingService(
         }
 
         req.Status = ResidentJoinRequestStatuses.Rejected;
-        req.DecidedBy = tenantContext.UserId;
+        req.DecidedBy = currentUser.Actor;
         req.DecidedAtUtc = DateTime.UtcNow;
         req.RejectReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
 

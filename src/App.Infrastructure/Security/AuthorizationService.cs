@@ -8,7 +8,7 @@ namespace App.Infrastructure.Security;
 
 
 public sealed class AuthorizationService(
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IEffectivePermissionQuery effectivePermissions)
     : IPermissionEvaluator, IAuthorizationGuard
 {
@@ -17,7 +17,7 @@ public sealed class AuthorizationService(
     private IReadOnlyCollection<EffectivePermission>? _cachedPermissions;
 
     public async ValueTask<bool> IsPermittedAsync(
-        ITenantContext tenantContext,
+        CurrentUser currentUser,
         PermissionRequirement requirement,
         CancellationToken cancellationToken = default)
         => await HasPermissionAsync(requirement.Action, requirement.ResourceType, cancellationToken);
@@ -29,7 +29,7 @@ public sealed class AuthorizationService(
     {
         // Platform super admin is permitted across communities as conferred by that role (Req 5.3,
         // 5.5) — modeled via the signed flag, not a role-name string.
-        if (tenant.IsPlatformSuperAdmin)
+        if (currentUser.IsSuperAdmin)
         {
             return true;
         }
@@ -37,7 +37,7 @@ public sealed class AuthorizationService(
         // Default-deny: an unresolved/anonymous principal holds nothing. (The middleware already
         // rejects anonymous callers with UNAUTHENTICATED before reaching here; this keeps the
         // evaluator safe if called in any other context.)
-        if (!Guid.TryParse(tenant.UserId, out var userId))
+        if (currentUser.UserId is not { } userId)
         {
             return false;
         }
@@ -53,7 +53,7 @@ public sealed class AuthorizationService(
         // Super admin crosses communities (Req 5.5). Otherwise the target must be in the caller's
         // authorized set, else FORBIDDEN with no state change (Req 5.3, defense-in-depth over the
         // EF global filter).
-        if (tenant.IsPlatformSuperAdmin || tenant.AuthorizedCommunityIds.Contains(communityId))
+        if (currentUser.CanAccessCommunity(communityId))
         {
             return;
         }
@@ -80,7 +80,7 @@ public sealed class AuthorizationService(
         }
 
         _cachedPermissions = await effectivePermissions.GetEffectivePermissionsAsync(
-            userId, tenant.AuthorizedCommunityIds, cancellationToken);
+            userId, currentUser.AccessibleCommunityIds, cancellationToken);
 
         return _cachedPermissions;
     }

@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using System.Globalization;
 using App.Application.Abstractions;
 using App.Application.Abstractions.Audit;
@@ -33,7 +34,7 @@ public sealed class ConfigService(
     AppDbContext db,
     IMemoryCache cache,
     IConfigAuditSink audit,
-    ITenantContext tenant) : IConfigService
+    CurrentUser currentUser) : IConfigService
 {
     // Bounded TTL so a stale value self-heals even if an invalidation is somehow missed; edits
     // invalidate immediately. ponytail: a fixed small window is fine for reference/config data.
@@ -169,7 +170,7 @@ public sealed class ConfigService(
         InvalidateValue(key, communityId);
 
         await audit.RecordConfigChangeAsync(
-            new ConfigChange("Configuration", key, communityId, oldValue, value, tenant.UserId),
+            new ConfigChange("Configuration", key, communityId, oldValue, value, currentUser.Actor),
             cancellationToken);
     }
 
@@ -231,7 +232,7 @@ public sealed class ConfigService(
         InvalidateValue(key, communityId);
 
         await audit.RecordConfigChangeAsync(
-            new ConfigChange("Configuration", key, communityId, oldValue, request.Value, tenant.UserId),
+            new ConfigChange("Configuration", key, communityId, oldValue, request.Value, currentUser.Actor),
             cancellationToken);
 
         return new ConfigRow(existing.Id, existing.Key, existing.Scope, existing.OrganizationId, existing.CommunityId, existing.Value);
@@ -249,7 +250,7 @@ public sealed class ConfigService(
         InvalidateValue(key, communityId);
 
         await audit.RecordConfigChangeAsync(
-            new ConfigChange("Configuration", key, communityId, row.Value, null, tenant.UserId),
+            new ConfigChange("Configuration", key, communityId, row.Value, null, currentUser.Actor),
             cancellationToken);
     }
 
@@ -332,7 +333,7 @@ public sealed class ConfigService(
 
         await audit.RecordConfigChangeAsync(
             new ConfigChange("MasterDataItem", $"{listKey}:{entry.Code}", communityId, oldValue,
-                $"{entry.Label}/{entry.SortOrder}/{entry.IsActive}", tenant.UserId),
+                $"{entry.Label}/{entry.SortOrder}/{entry.IsActive}", currentUser.Actor),
             cancellationToken);
     }
 

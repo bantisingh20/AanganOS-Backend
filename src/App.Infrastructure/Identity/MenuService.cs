@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Exceptions;
 using App.Application.Identity;
@@ -9,7 +10,7 @@ namespace App.Infrastructure.Identity;
 
 public sealed class MenuService(
     AppDbContext db,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IClock clock,
     IEffectivePermissionQuery effectivePermissions) : IMenuService
 {
@@ -129,12 +130,12 @@ public sealed class MenuService(
 
     public async Task<IReadOnlyList<MenuNodeDto>> GetMenuAsync(CancellationToken cancellationToken = default)
     {
-        if (!Guid.TryParse(tenant.UserId, out var userId))
+        if (currentUser.UserId is not { } userId)
         {
             return [];
         }
 
-        var isSuperAdmin = tenant.IsPlatformSuperAdmin;
+        var isSuperAdmin = currentUser.IsSuperAdmin;
 
         var surfaces = isSuperAdmin
             ? new HashSet<MenuSurface> { MenuSurface.Admin, MenuSurface.Common }
@@ -158,7 +159,7 @@ public sealed class MenuService(
 
         var grantedPairs = isSuperAdmin
             ? null
-            : (await effectivePermissions.GetEffectivePermissionsAsync(userId, tenant.AuthorizedCommunityIds, cancellationToken))
+            : (await effectivePermissions.GetEffectivePermissionsAsync(userId, currentUser.AccessibleCommunityIds, cancellationToken))
                 .Select(p => $"{p.ResourceType}:{(int)p.Action}")
                 .ToHashSet(StringComparer.Ordinal);
 

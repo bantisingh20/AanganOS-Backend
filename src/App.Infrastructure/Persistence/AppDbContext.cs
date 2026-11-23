@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using System.Reflection;
 using App.Application.Abstractions;
 using App.Application.Exceptions;
@@ -19,10 +20,10 @@ using Microsoft.EntityFrameworkCore;
 namespace App.Infrastructure.Persistence;
 
 
-public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext tenant)
+public class AppDbContext(DbContextOptions<AppDbContext> options, CurrentUser currentUser)
     : DbContext(options)
 {
-    private readonly ITenantContext _tenant = tenant;
+    private readonly CurrentUser _currentUser = currentUser;
 
     public DbSet<SampleTenantRecord> SampleTenantRecords => Set<SampleTenantRecord>();
 
@@ -143,9 +144,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Domain.MaintenanceBilling.MaintenancePayment> MaintenancePayments => Set<Domain.MaintenanceBilling.MaintenancePayment>();
     public DbSet<Domain.MaintenanceBilling.MaintenanceExpense> MaintenanceExpenses => Set<Domain.MaintenanceBilling.MaintenanceExpense>();
 
-    private bool IsSuperAdmin => _tenant.IsPlatformSuperAdmin;
-    private bool IsResidentSelfScoped => _tenant.IsResidentSelfScoped;
-    private Guid? ResidentUnitId => _tenant.ResidentUnitId;
+    private bool IsSuperAdmin => _currentUser.IsSuperAdmin;
+    private bool IsResidentSelfScoped => _currentUser.IsResident;
+    private Guid? ResidentUnitId => _currentUser.UnitId;
 
     private static readonly MethodInfo TenantFilterMethod =
         typeof(AppDbContext).GetMethod(nameof(ApplyTenantFilter), BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -258,14 +259,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         where TEntity : TenantOwnedEntity =>
         modelBuilder.Entity<TEntity>().HasQueryFilter(e =>
             !e.IsDeleted &&
-            (IsSuperAdmin || _tenant.AuthorizedCommunityIds.Contains(e.CommunityId)));
+            (IsSuperAdmin || _currentUser.AccessibleCommunityIds.Contains(e.CommunityId)));
 
 
     private void ApplyResidentScopedTenantFilter<TEntity>(ModelBuilder modelBuilder)
         where TEntity : TenantOwnedEntity, IUnitScoped =>
         modelBuilder.Entity<TEntity>().HasQueryFilter(e =>
             !e.IsDeleted &&
-            (IsSuperAdmin || _tenant.AuthorizedCommunityIds.Contains(e.CommunityId)) &&
+            (IsSuperAdmin || _currentUser.AccessibleCommunityIds.Contains(e.CommunityId)) &&
             (!IsResidentSelfScoped || e.UnitId == ResidentUnitId));
 
     private void ApplyPlatformFilter<TEntity>(ModelBuilder modelBuilder)

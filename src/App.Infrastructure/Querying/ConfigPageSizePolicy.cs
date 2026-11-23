@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Config;
 using App.Application.Querying;
@@ -20,7 +21,7 @@ namespace App.Infrastructure.Querying;
 /// whole point of the seam that was left in Task 2.3.</para>
 ///
 /// <para><b>Resolution.</b> The policy's community is the single authorized community of the current
-/// scoped request (<see cref="ITenantContext"/>). Values are read from the config store and cached
+/// scoped request (<see cref="CurrentUser"/>). Values are read from the config store and cached
 /// in <see cref="IMemoryCache"/> keyed per community so one tenant's override cannot leak to
 /// another (steering). The read uses a <i>synchronous</i> EF query — not a blocked async call —
 /// because <see cref="IPageSizePolicy"/> exposes synchronous properties; it is index-backed
@@ -35,10 +36,10 @@ public sealed class ConfigPageSizePolicy : IPageSizePolicy
         IOptionsSnapshot<PaginationOptions> options,
         AppDbContext db,
         IMemoryCache cache,
-        ITenantContext tenant)
+        CurrentUser currentUser)
     {
         var platform = options.Value;
-        var communityId = SingleCommunityOrNull(tenant);
+        var communityId = SingleCommunityOrNull(currentUser);
 
         _defaultPageSize = ResolveInt(db, cache, ConfigKeys.PaginationDefaultPageSize, communityId, platform.DefaultPageSize);
         var resolvedMax = ResolveInt(db, cache, ConfigKeys.PaginationMaxPageSize, communityId, platform.MaxPageSize);
@@ -52,8 +53,8 @@ public sealed class ConfigPageSizePolicy : IPageSizePolicy
 
     public int MaxPageSize => _maxPageSize;
 
-    private static Guid? SingleCommunityOrNull(ITenantContext tenant)
-        => tenant.AuthorizedCommunityIds.Count == 1 ? tenant.AuthorizedCommunityIds.First() : null;
+    private static Guid? SingleCommunityOrNull(CurrentUser currentUser)
+        => currentUser.CommunityId;
 
     /// <summary>
     /// Community override wins, else platform config value, else the supplied platform default from

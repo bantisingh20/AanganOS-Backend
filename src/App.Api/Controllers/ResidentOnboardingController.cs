@@ -28,6 +28,14 @@ public sealed class ResidentOnboardingController(IResidentOnboardingService svc)
         return Ok(ApiResult<IReadOnlyList<PublicCommunityDto>>.Ok(items, string.Empty));
     }
 
+    [HttpGet("api/v1/public/societies")]
+    [EnableRateLimiting(RateLimitingExtensions.AuthPolicy)]
+    public async Task<IActionResult> SearchSociety([FromQuery] string? search, CancellationToken ct)
+    {
+        var items = await svc.SearchSocietyAsync(search, ct);
+        return Ok(ApiResult<IReadOnlyList<PublicSocietytDto>>.Ok(items, string.Empty));
+    }
+
     [HttpGet("api/v1/public/communities/{communityId:guid}/wings")]
     [EnableRateLimiting(RateLimitingExtensions.AuthPolicy)]
     public async Task<IActionResult> ListWings(Guid communityId, CancellationToken ct)

@@ -26,7 +26,7 @@ public sealed class ResidentService(
     IAsyncQueryExecutor executor,
     IAuthorizationGuard authorizationGuard,
     INotificationService notifications,
-    ITenantContext tenantContext,
+    CurrentUser currentUser,
     IFileService files,
     App.Application.Auth.IPasswordHasher passwordHasher)
     : IResidentService
@@ -390,7 +390,7 @@ public sealed class ResidentService(
     public async Task<ResidentMeDto> GetMeAsync(CancellationToken cancellationToken = default)
     {
        
-        if (!Guid.TryParse(tenantContext.UserId, out var userId))
+        if (currentUser.UserId is not { } userId)
         {
             return new ResidentMeDto(null, []);
         }
@@ -423,7 +423,7 @@ public sealed class ResidentService(
             throw new ValidationException("presenceStatus", "Presence status must be 'at_home' or 'outdoor'.");
         }
 
-        if (!Guid.TryParse(tenantContext.UserId, out var userId))
+        if (currentUser.UserId is not { } userId)
         {
             throw new ForbiddenException("You must be signed in to update your presence.");
         }
@@ -441,7 +441,7 @@ public sealed class ResidentService(
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (!Guid.TryParse(tenantContext.UserId, out var userId))
+        if (currentUser.UserId is not { } userId)
         {
             throw new ForbiddenException("You must be signed in to submit verification.");
         }

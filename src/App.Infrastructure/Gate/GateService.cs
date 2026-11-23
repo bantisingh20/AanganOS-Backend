@@ -37,7 +37,7 @@ public sealed class GateService(
     IPageSizePolicy pageSizePolicy,
     IAsyncQueryExecutor executor,
     IFileBlobStore blobStore,
-    ITenantContext tenant)
+    CurrentUser currentUser)
     : IGateService
 {
     private static readonly ListQueryConfiguration<VisitPass> VisitPassQueryConfig =
@@ -158,8 +158,9 @@ public sealed class GateService(
             throw new ForbiddenException("You do not have permission to create a visit pass.");
         }
 
-        var communityId = await RequireHostUnitCommunityAsync(request.HostUnitId, cancellationToken);
-        authorizationGuard.EnsureCommunityAuthorized(communityId);
+        // Unit / community / host resident: from the request, else the logged-in user.
+        var (hostUnitId, communityId, hostResidentId) = await ResolveHostAsync(
+            request.HostUnitId, request.HostResidentId, request.CommunityId, cancellationToken);
 
         var now = clock.UtcNow;
         var validFrom = request.ValidFromUtc ?? now;
@@ -199,8 +200,8 @@ public sealed class GateService(
         var pass = new VisitPass
         {
             CommunityId = communityId,
-            HostUnitId = request.HostUnitId,
-            HostResidentId = request.HostResidentId,
+            HostUnitId = hostUnitId,
+            HostResidentId = hostResidentId,
             VisitorName = visitorName,
             Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
             Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim(),
@@ -707,8 +708,11 @@ public sealed class GateService(
 
         // Resolve the host unit (tenant + resident self-scope filtered) → its community anchors the
         // row and runs the own-unit/same-community check (a cross-unit host → not found).
-        var communityId = await RequireHostUnitCommunityAsync(request.HostUnitId, cancellationToken);
-        authorizationGuard.EnsureCommunityAuthorized(communityId);
+        // Unit / community / host resident: from the request, else the logged-in user.
+        var (hostUnitId, communityId, resolvedResidentId) = await ResolveHostAsync(
+            request.HostUnitId, request.HostResidentId, request.CommunityId, cancellationToken);
+        var hostResidentId = resolvedResidentId
+            ?? throw new ValidationException("hostResidentId", "Select a resident: you are not a resident, so hostResidentId is required.");
         await RequireValidCategoryAsync(request.Category, communityId, cancellationToken);
         ValidateSchedule(request);
 
@@ -721,8 +725,8 @@ public sealed class GateService(
         var recurring = new RecurringVisitor
         {
             CommunityId = communityId,
-            HostUnitId = request.HostUnitId,
-            HostResidentId = request.HostResidentId,
+            HostUnitId = hostUnitId,
+            HostResidentId = hostResidentId,
             Name = name,
             Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
             PhotoFileId = photoFileId,
@@ -1095,8 +1099,8 @@ public sealed class GateService(
             throw new ValidationException("plate", "A vehicle number is required.");
         }
 
-        var communityIds = tenant.AuthorizedCommunityIds.ToArray();
-        var allCommunities = tenant.IsPlatformSuperAdmin;
+        var communityIds = currentUser.AccessibleCommunityIds.ToArray();
+        var allCommunities = currentUser.IsSuperAdmin;
         var matches = new List<VehicleLookupMatch>();
 
         var residentVehicles = await db.Vehicles.AsNoTracking().IgnoreQueryFilters()
@@ -1699,6 +1703,30 @@ public sealed class GateService(
     /// so it is always owned by the same community as its host unit (same-community by construction,
     /// Req 23.1, 24.1).
     /// </summary>
+    /// <summary>
+    /// Host of a visit pass / recurring visitor: what the request passed, else the logged-in user.
+    /// <list type="bullet">
+    ///   <item>Unit: request.HostUnitId, else CurrentUser.UnitId (else validation error).</item>
+    ///   <item>Community: always the unit's community; a passed communityId must match it.</item>
+    ///   <item>Resident: request.HostResidentId, else CurrentUser.ResidentId (may be null).</item>
+    /// </list>
+    /// </summary>
+    private async Task<(Guid UnitId, Guid CommunityId, Guid? ResidentId)> ResolveHostAsync(
+        Guid? hostUnitId, Guid? hostResidentId, Guid? requestedCommunityId, CancellationToken cancellationToken)
+    {
+        var unitId = hostUnitId ?? currentUser.UnitId
+            ?? throw new ValidationException("hostUnitId", "Select a unit: you are not linked to a unit, so hostUnitId is required.");
+
+        var communityId = await RequireHostUnitCommunityAsync(unitId, cancellationToken);
+        if (requestedCommunityId is { } requested && requested != communityId)
+        {
+            throw new ValidationException("communityId", "The unit does not belong to the selected community.");
+        }
+
+        authorizationGuard.EnsureCommunityAuthorized(communityId);
+        return (unitId, communityId, hostResidentId ?? currentUser.ResidentId);
+    }
+
     private async Task<Guid> RequireHostUnitCommunityAsync(Guid hostUnitId, CancellationToken cancellationToken)
     {
         var communityId = await db.Units.AsNoTracking()

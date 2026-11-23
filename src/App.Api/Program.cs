@@ -56,7 +56,7 @@ if (builder.Configuration.GetValue<bool?>("WalkInExpiryWorker:RunInApi") ?? true
     builder.Services.AddHostedService<App.Api.Gate.ApiWalkInExpiryService>();
 }
 
-builder.Services.AddRequestPipelineSecurity(builder.Configuration);
+builder.Services.AddJwtLogin();
 
 builder.AddObservability();
 

@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using System.ComponentModel.DataAnnotations;
 using System.IdentityModel.Tokens.Jwt;
 using App.Api.Security;
@@ -13,7 +14,7 @@ namespace App.Api.Controllers;
 [ApiController]
 [Route("api/v1/auth")]
 [EnableRateLimiting(RateLimitingExtensions.AuthPolicy)]
-public sealed class AuthController(IAuthService auth) : ControllerBase
+public sealed class AuthController(IAuthService auth, CurrentUser currentUser) : ControllerBase
 {
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginBody body, CancellationToken ct)
@@ -76,14 +77,7 @@ public sealed class AuthController(IAuthService auth) : ControllerBase
     [HttpPost("password/change")]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordBody body, CancellationToken ct)
     {
-        if (HttpContext.User.Identity?.IsAuthenticated != true)
-        {
-            throw new UnauthenticatedException();
-        }
-
-        var sub = HttpContext.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
-            ?? HttpContext.User.FindFirst("sub")?.Value;
-        if (!Guid.TryParse(sub, out var userId))
+        if (currentUser.UserId is not { } userId)
         {
             throw new UnauthenticatedException();
         }
@@ -91,6 +85,41 @@ public sealed class AuthController(IAuthService auth) : ControllerBase
         await auth.ChangePasswordAsync(userId, new ChangePasswordRequest(body.CurrentPassword ?? string.Empty, body.NewPassword ?? string.Empty), ct);
         return Ok(ApiResult<ChangePasswordResponse>.Ok(new ChangePasswordResponse(true), string.Empty));
     }
+
+    /// <summary>The logged-in person's details, straight from <see cref="CurrentUser"/>.</summary>
+    [HttpGet("me")]
+    public IActionResult Me()
+    {
+        if (!currentUser.IsAuthenticated)
+        {
+            throw new UnauthenticatedException();
+        }
+
+        var me = new MeResponse(
+            currentUser.UserId,
+            currentUser.CommunityId,
+            currentUser.UnitId,
+            currentUser.OrganizationId,
+            currentUser.ResidentId,
+            currentUser.ResidentType,
+            currentUser.Role,
+            currentUser.Roles,
+            currentUser.IsSuperAdmin,
+            currentUser.IsResident);
+        return Ok(ApiResult<MeResponse>.Ok(me, string.Empty));
+    }
+
+    public sealed record MeResponse(
+        Guid? UserId,
+        Guid? CommunityId,
+        Guid? UnitId,
+        Guid? OrganizationId,
+        Guid? ResidentId,
+        string? ResidentType,
+        string? Role,
+        IReadOnlyList<string> Roles,
+        bool IsSuperAdmin,
+        bool IsResident);
 
     public sealed class LoginBody
     {
@@ -179,13 +208,13 @@ public sealed class AuthController(IAuthService auth) : ControllerBase
 }
 
 [ApiController]
-public sealed class DevicesController(ITenantContext tenant, IAuthService auth) : ControllerBase
+public sealed class DevicesController(CurrentUser currentUser, IAuthService auth) : ControllerBase
 {
     [HttpPost("api/v1/devices")]
     [EnableRateLimiting(RateLimitingExtensions.WritePolicy)]
     public async Task<IActionResult> Register([FromBody] RegisterDeviceBody body, CancellationToken ct)
     {
-        if (!Guid.TryParse(tenant.UserId, out var userId))
+        if (currentUser.UserId is not { } userId)
         {
             throw new UnauthenticatedException();
         }

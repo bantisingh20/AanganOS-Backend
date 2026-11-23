@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Audit;
 using App.Application.Config;
@@ -16,7 +17,7 @@ public sealed class SubscriptionService(
     AppDbContext db,
     IAuditService audit,
     IConfigService config,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IClock clock,
     IMessageSender messageSender,
     INotificationService notifications,
@@ -78,7 +79,7 @@ public sealed class SubscriptionService(
             throw new ConflictException("A renewal request is already pending for your organization.");
         }
 
-        var requestedBy = Guid.TryParse(tenant.UserId, out var uid) ? uid : Guid.Empty;
+        var requestedBy = (currentUser.UserId ?? Guid.Empty);
         var request = new SubscriptionRenewalRequest
         {
             OrganizationId = organizationId,
@@ -135,7 +136,7 @@ public sealed class SubscriptionService(
             throw new ConflictException("This renewal request has already been resolved.");
         }
 
-        var resolvedBy = Guid.TryParse(tenant.UserId, out var uid) ? uid : (Guid?)null;
+        var resolvedBy = currentUser.UserId;
         request.Status = SubscriptionRenewalStatuses.Approved;
         request.ResolvedBy = resolvedBy;
         request.ResolvedAtUtc = clock.UtcNow;
@@ -285,7 +286,7 @@ public sealed class SubscriptionService(
         }
     }
 
-    private async Task<SubscriptionDto> BuildDtoAsync(Guid organizationId, CancellationToken cancellationToken)
+    public async Task<SubscriptionDto> BuildDtoAsync(Guid organizationId, CancellationToken cancellationToken)
     {
         var sub = await db.OrgSubscriptions.AsNoTracking().IgnoreQueryFilters()
             .FirstOrDefaultAsync(s => s.OrganizationId == organizationId && !s.IsDeleted, cancellationToken);
@@ -339,12 +340,16 @@ public sealed class SubscriptionService(
 
     private async Task<Guid?> ResolveCallerOrganizationIdAsync(CancellationToken cancellationToken)
     {
-        if (tenant.AuthorizedCommunityIds.Count == 0)
+        if (currentUser.OrganizationId is { } org)
+        {
+            return org;
+        }
+
+        if (currentUser.CommunityId is not { } first)
         {
             return null;
         }
 
-        var first = tenant.AuthorizedCommunityIds.First();
         return await db.Communities.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.Id == first)
             .Select(c => (Guid?)c.OrganizationId)

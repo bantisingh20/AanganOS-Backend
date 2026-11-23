@@ -44,7 +44,7 @@ public sealed class UnitBulkService(
     IAuditService audit,
     IConfigService config,
     IAuthorizationGuard authorizationGuard,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IOptions<BulkOptions> bulkOptions,
     IAppCache cache)
     : IUnitBulkService
@@ -158,7 +158,7 @@ public sealed class UnitBulkService(
         // is null because an export can span the caller's authorized communities.
         await audit.AppendAsync(
             new AuditEntry("BulkExport", "Unit", ResourceId: null, CommunityId: null,
-                Detail: $"rows={units.Count};authorizedCommunities={tenant.AuthorizedCommunityIds.Count}"),
+                Detail: $"rows={units.Count};authorizedCommunities={currentUser.AccessibleCommunityIds.Count}"),
             cancellationToken);
 
         var bytes = System.Text.Encoding.UTF8.GetBytes(csv);

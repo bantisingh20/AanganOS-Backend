@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Domain.Audit;
 using App.Domain.Common;
@@ -13,7 +14,7 @@ namespace App.Infrastructure.Persistence.Interceptors;
 /// Stamps audit columns on insert/update and converts hard deletes of soft-deletable
 /// entities into soft deletes (sets <see cref="ISoftDeletable.IsDeleted"/> +
 /// <see cref="ISoftDeletable.DeletedAtUtc"/>). The acting user and timestamp come from the
-/// injected <see cref="ITenantContext"/> / <see cref="IClock"/> — never from the caller's DTO.
+/// injected <see cref="CurrentUser"/> / <see cref="IClock"/> — never from the caller's DTO.
 ///
 /// <para><b>Append-only audit enforcement (Req 6.3).</b> This interceptor is also the data-layer
 /// guard that makes the <c>AuditLog</c> table append-only: it rejects any <c>AuditLog</c> entry in
@@ -23,7 +24,7 @@ namespace App.Infrastructure.Persistence.Interceptors;
 /// that can edit or remove a persisted audit record — attempting it fails loudly rather than
 /// silently corrupting the trail.</para>
 /// </summary>
-public sealed class AuditSaveChangesInterceptor(ITenantContext tenant, IClock clock)
+public sealed class AuditSaveChangesInterceptor(CurrentUser currentUser, IClock clock)
     : SaveChangesInterceptor
 {
     public override InterceptionResult<int> SavingChanges(
@@ -49,7 +50,7 @@ public sealed class AuditSaveChangesInterceptor(ITenantContext tenant, IClock cl
         }
 
         var now = clock.UtcNow;
-        var actingUser = tenant.UserId;
+        var actingUser = currentUser.Actor;
 
         foreach (var entry in context.ChangeTracker.Entries())
         {

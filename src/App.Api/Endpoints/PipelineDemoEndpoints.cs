@@ -14,7 +14,7 @@ namespace App.Api.Endpoints;
 /// Thin demo endpoints that exercise the Task 2.2 pipeline seams end-to-end so the integration
 /// tests can prove behaviour without waiting for Phase 2 feature endpoints:
 /// <list type="bullet">
-///   <item><description><c>GET /pipeline-demo/my-communities</c> — protected (RequirePermission + authentication). Reads the request-scoped <see cref="ITenantContext"/> and queries <see cref="AppDbContext"/> so the authorized-communities-from-claims flow is visible end-to-end (Req 5.1).</description></item>
+///   <item><description><c>GET /pipeline-demo/my-communities</c> — protected (RequirePermission + authentication). Reads the request-scoped <see cref="CurrentUser"/> and queries <see cref="AppDbContext"/> so the authorized-communities-from-claims flow is visible end-to-end (Req 5.1).</description></item>
 ///   <item><description><c>POST /pipeline-demo/echo</c> — protected + DataAnnotations validation at the trust boundary (Req 9.2).</description></item>
 /// </list>
 /// ponytail: demo-only surface for the foundation phase; real module endpoints replace it in Phase 2.
@@ -28,17 +28,17 @@ public static class PipelineDemoEndpoints
         // Protected read: requires authentication + View permission on "Community". Projects the
         // tenant context the pipeline built from the token's claims, plus the row count the global
         // filter actually returns for that scope.
-        group.MapGet("/my-communities", async (ITenantContext tenant, AppDbContext db, CancellationToken ct) =>
+        group.MapGet("/my-communities", async (CurrentUser currentUser, AppDbContext db, CancellationToken ct) =>
         {
             var visibleRowCount = await db.SampleTenantRecords.AsNoTracking().CountAsync(ct);
 
             var payload = new MyCommunitiesResponse(
-                tenant.UserId,
-                tenant.AuthorizedCommunityIds.ToArray(),
-                tenant.IsPlatformSuperAdmin,
+                currentUser.UserId?.ToString(),
+                currentUser.AccessibleCommunityIds.ToArray(),
+                currentUser.IsSuperAdmin,
                 visibleRowCount);
 
-            return Results.Ok(ApiResult<MyCommunitiesResponse>.Ok(payload, CorrelationOf(tenant)));
+            return Results.Ok(ApiResult<MyCommunitiesResponse>.Ok(payload, CorrelationOf(currentUser)));
         })
         .WithMetadata(new RequirePermissionAttribute(PermissionAction.View, "Community"));
 
@@ -53,7 +53,7 @@ public static class PipelineDemoEndpoints
 
     // The envelope's correlation id is set by the pipeline/middleware; endpoints don't own it, so
     // the demo leaves it empty here (the middleware overwrites the header + logs the real id).
-    private static string CorrelationOf(ITenantContext _) => string.Empty;
+    private static string CorrelationOf(CurrentUser _) => string.Empty;
 
     public sealed record MyCommunitiesResponse(
         string? UserId,

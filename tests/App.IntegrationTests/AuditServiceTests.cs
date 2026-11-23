@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Audit;
 using App.Application.Querying;
@@ -54,14 +55,14 @@ public sealed class AuditServiceTests : IDisposable
     {
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
-        var seedTenant = new TestTenantContext { IsPlatformSuperAdmin = true };
+        var seedTenant = new CurrentUser { IsSuperAdmin = true };
         using var ctx = NewContext(seedTenant, new FixedClock());
         ctx.Database.EnsureCreated();
     }
 
     public void Dispose() => _connection.Dispose();
 
-    private AppDbContext NewContext(ITenantContext tenant, IClock clock)
+    private AppDbContext NewContext(CurrentUser tenant, IClock clock)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlite(_connection)
@@ -70,11 +71,11 @@ public sealed class AuditServiceTests : IDisposable
         return new AppDbContext(options, tenant);
     }
 
-    private AuditService NewService(AppDbContext ctx, ITenantContext tenant, IClock clock) =>
+    private AuditService NewService(AppDbContext ctx, CurrentUser tenant, IClock clock) =>
         new(ctx, tenant, clock, new StubPageSizePolicy(), _executor);
 
-    private TestTenantContext Admin(Guid community, string user) =>
-        new() { AuthorizedCommunityIds = [community], UserId = user };
+    private CurrentUser Admin(Guid community, string user) =>
+        new() { CommunityId = community, Actor = user };
 
     [Fact]
     public async Task AppendAsync_writes_entry_with_actor_action_resource_community_timestamp()
@@ -101,7 +102,7 @@ public sealed class AuditServiceTests : IDisposable
     public async Task Login_security_event_can_be_recorded_without_a_community()
     {
         var clock = new FixedClock();
-        var tenant = new TestTenantContext { UserId = "someone" };
+        var tenant = new CurrentUser { Actor = "someone" };
         await using var ctx = NewContext(tenant, clock);
         var svc = NewService(ctx, tenant, clock);
 
@@ -154,7 +155,7 @@ public sealed class AuditServiceTests : IDisposable
     public async Task Audit_entries_survive_soft_delete_of_the_referenced_resource()
     {
         var clock = new FixedClock();
-        var admin = new TestTenantContext { IsPlatformSuperAdmin = true, UserId = "admin-a", AuthorizedCommunityIds = [_communityA] };
+        var admin = new CurrentUser { IsSuperAdmin = true, Actor = "admin-a", CommunityId = _communityA };
         await using var ctx = NewContext(admin, clock);
         var svc = NewService(ctx, admin, clock);
 
@@ -195,9 +196,9 @@ public sealed class AuditServiceTests : IDisposable
             await NewService(ctxB, Admin(_communityB, "admin-b"), clock)
                 .AppendAsync(new AuditEntry("Create", "Unit", "b1", _communityB, null));
         }
-        await using (var platform = NewContext(new TestTenantContext { UserId = "sys" }, clock))
+        await using (var platform = NewContext(new CurrentUser { Actor = "sys" }, clock))
         {
-            await NewService(platform, new TestTenantContext { UserId = "sys" }, clock)
+            await NewService(platform, new CurrentUser { Actor = "sys" }, clock)
                 .AppendAsync(new AuditEntry("PlatformConfig", "Configuration", "k", CommunityId: null, Detail: null));
         }
 
@@ -211,7 +212,7 @@ public sealed class AuditServiceTests : IDisposable
         }
 
         // Super admin: sees across all communities and the platform event.
-        var superAdmin = new TestTenantContext { IsPlatformSuperAdmin = true, UserId = "root" };
+        var superAdmin = new CurrentUser { IsSuperAdmin = true, Actor = "root" };
         await using (var ctx = NewContext(superAdmin, clock))
         {
             var page = await NewService(ctx, superAdmin, clock).QueryAsync(new ListQueryParameters());

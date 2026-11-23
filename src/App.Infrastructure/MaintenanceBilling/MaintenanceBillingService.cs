@@ -25,7 +25,7 @@ public sealed class MaintenanceBillingService(
     IConfigService config,
     IClock clock,
     IAuthorizationGuard authorizationGuard,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IPageSizePolicy pageSizePolicy,
     IAsyncQueryExecutor executor,
     INotificationService notifications)
@@ -294,8 +294,8 @@ public sealed class MaintenanceBillingService(
             throw new ForbiddenException("You do not have permission to view maintenance bills.");
         }
 
-        var isSuperAdmin = tenant.IsPlatformSuperAdmin;
-        var communityIds = tenant.AuthorizedCommunityIds.ToList();
+        var isSuperAdmin = currentUser.IsSuperAdmin;
+        var communityIds = currentUser.AccessibleCommunityIds.ToList();
         if (!isSuperAdmin && communityIds.Count == 0)
         {
             return new List<MaintenanceDefaulterDto>();
@@ -1104,7 +1104,7 @@ public sealed class MaintenanceBillingService(
     }
 
     private Guid? ParseUserId() =>
-        Guid.TryParse(tenant.UserId, out var id) ? id : null;
+        currentUser.UserId;
 
     public async Task<MaintenanceBillDto> WaiveBillAsync(Guid billId, CancellationToken cancellationToken = default)
     {

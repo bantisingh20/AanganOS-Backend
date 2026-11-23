@@ -34,7 +34,8 @@ public sealed class GateController(IGateService gate) : ControllerBase
             body.WhomToMeet,
             body.VisitDateUtc,
             body.PhotoFileId,
-            body.PhotoBase64), ct);
+            body.PhotoBase64,
+            body.CommunityId), ct);
         return Ok(ApiResult<CreateVisitPassResult>.Ok(result, string.Empty));
     }
 
@@ -267,7 +268,8 @@ public sealed class GateController(IGateService gate) : ControllerBase
             body.DailyStartMinutes,
             body.DailyEndMinutes,
             body.PhotoFileId,
-            body.PhotoBase64), ct);
+            body.PhotoBase64,
+            body.CommunityId), ct);
         return Ok(ApiResult<RecurringVisitorDto>.Ok(dto, string.Empty));
     }
 
@@ -349,10 +351,14 @@ public sealed class GateController(IGateService gate) : ControllerBase
 
     public sealed class CreateVisitPassBody
     {
-        [Required(ErrorMessage = "hostUnitId is required")]
-        public Guid HostUnitId { get; init; }
+        /// <summary>Optional. Defaults to the logged-in resident's own unit.</summary>
+        public Guid? HostUnitId { get; init; }
 
+        /// <summary>Optional. Defaults to the logged-in resident.</summary>
         public Guid? HostResidentId { get; init; }
+
+        /// <summary>Optional. Must match the unit's community when passed.</summary>
+        public Guid? CommunityId { get; init; }
 
         [Required(AllowEmptyStrings = false, ErrorMessage = "visitorName is required")]
         [MaxLength(256)]
@@ -520,11 +526,14 @@ public sealed class GateController(IGateService gate) : ControllerBase
 
     public sealed class CreateRecurringVisitorBody
     {
-        [Required(ErrorMessage = "hostUnitId is required")]
-        public Guid HostUnitId { get; init; }
+        /// <summary>Optional. Defaults to the logged-in resident's own unit.</summary>
+        public Guid? HostUnitId { get; init; }
 
-        [Required(ErrorMessage = "hostResidentId is required")]
-        public Guid HostResidentId { get; init; }
+        /// <summary>Optional. Defaults to the logged-in resident.</summary>
+        public Guid? HostResidentId { get; init; }
+
+        /// <summary>Optional. Must match the unit's community when passed.</summary>
+        public Guid? CommunityId { get; init; }
 
         [Required(AllowEmptyStrings = false, ErrorMessage = "name is required")]
         [MaxLength(256)]

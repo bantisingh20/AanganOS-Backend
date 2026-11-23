@@ -90,8 +90,12 @@ public sealed record VerifyVisitPassResult(
     VisitPassDto? Pass);
 
 
+/// <summary>
+/// Create a visit pass. HostUnitId / HostResidentId / CommunityId are optional: when omitted they come
+/// from the logged-in user (CurrentUser.UnitId / ResidentId / CommunityId).
+/// </summary>
 public sealed record CreateVisitPassRequest(
-    Guid HostUnitId,
+    Guid? HostUnitId,
     Guid? HostResidentId,
     string VisitorName,
     DateTime? ValidFromUtc,
@@ -105,7 +109,8 @@ public sealed record CreateVisitPassRequest(
     string? WhomToMeet = null,
     DateTime? VisitDateUtc = null,
     Guid? PhotoFileId = null,
-    string? PhotoBase64 = null);
+    string? PhotoBase64 = null,
+    Guid? CommunityId = null);
 
 public sealed record VerifyVisitPassRequest(
     string? QrToken,
@@ -191,9 +196,13 @@ public sealed record RecurringVisitorDto(
     string Status,
     Guid? PhotoFileId = null);
 
+/// <summary>
+/// Create a recurring visitor. HostUnitId / HostResidentId / CommunityId are optional: when omitted
+/// they come from the logged-in user (CurrentUser.UnitId / ResidentId / CommunityId).
+/// </summary>
 public sealed record CreateRecurringVisitorRequest(
-    Guid HostUnitId,
-    Guid HostResidentId,
+    Guid? HostUnitId,
+    Guid? HostResidentId,
     string Name,
     string? Phone,
     string Category,
@@ -203,7 +212,8 @@ public sealed record CreateRecurringVisitorRequest(
     int? DailyStartMinutes,
     int? DailyEndMinutes,
     Guid? PhotoFileId = null,
-    string? PhotoBase64 = null);
+    string? PhotoBase64 = null,
+    Guid? CommunityId = null);
 
 public sealed record EntryExitEventDto(
     Guid Id,

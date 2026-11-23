@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Application.Abstractions;
 using App.Application.Abstractions.Audit;
 using App.Application.Config;
@@ -51,14 +52,14 @@ public sealed class ConfigServiceTests : IDisposable
         _connection.Open();
 
         // Create schema (applies HasData seed for Unit_Type / Unit_Status).
-        var seedTenant = new TestTenantContext { IsPlatformSuperAdmin = true };
+        var seedTenant = new CurrentUser { IsSuperAdmin = true };
         using var ctx = NewContext(seedTenant);
         ctx.Database.EnsureCreated();
     }
 
     public void Dispose() => _connection.Dispose();
 
-    private AppDbContext NewContext(ITenantContext tenant)
+    private AppDbContext NewContext(CurrentUser tenant)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlite(_connection)
@@ -68,15 +69,15 @@ public sealed class ConfigServiceTests : IDisposable
     }
 
     private static (IMemoryCache cache, ConfigService svc, AppDbContext ctx) BuildService(
-        AppDbContext ctx, ITenantContext tenant)
+        AppDbContext ctx, CurrentUser tenant)
     {
         var cache = new MemoryCache(new MemoryCacheOptions());
         var svc = new ConfigService(ctx, cache, new NoOpConfigAuditSink(), tenant);
         return (cache, svc, ctx);
     }
 
-    private TestTenantContext Tenant(Guid? community = null) =>
-        new() { AuthorizedCommunityIds = community is null ? [] : [community.Value], UserId = "tester" };
+    private CurrentUser Tenant(Guid? community = null) =>
+        new() { CommunityId = community, Actor = "tester" };
 
     [Fact]
     public async Task Community_value_overrides_platform_value_for_same_key()

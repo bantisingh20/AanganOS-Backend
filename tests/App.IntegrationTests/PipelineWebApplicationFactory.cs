@@ -82,8 +82,8 @@ public sealed class PipelineWebApplicationFactory : WebApplicationFactory<Progra
             // evaluator here so the pipeline tests keep testing the pipeline rather than RBAC data;
             // the real evaluator's deny/allow behaviour is covered separately by PermissionGateTests
             // and the Property-3/4 tests (5.5/5.6). Added last so it wins DI resolution.
-            services.AddScoped<IPermissionEvaluator,
-                App.Infrastructure.Security.AllowAuthenticatedPermissionEvaluator>();
+            // (The permissive test evaluator was removed: the permission middleware currently
+            // only checks authentication, so no evaluator override is needed.)
         });
     }
 
@@ -118,17 +118,17 @@ public sealed class PipelineWebApplicationFactory : WebApplicationFactory<Progra
         var tokenId = Guid.NewGuid().ToString("N");
         var claims = new List<Claim>
         {
-            new(CommunityClaimTypes.UserId, userId),
+            new(ClaimNames.UserId, userId),
             new(JwtRegisteredClaimNames.Jti, tokenId),
         };
         foreach (var id in communityIds ?? [])
         {
-            claims.Add(new Claim(CommunityClaimTypes.CommunityId, id.ToString()));
+            claims.Add(new Claim(ClaimNames.CommunityId, id.ToString()));
         }
 
         if (isSuperAdmin)
         {
-            claims.Add(new Claim(CommunityClaimTypes.IsPlatformSuperAdmin, "true"));
+            claims.Add(new Claim(ClaimNames.IsSuperAdmin, "true"));
         }
 
         var issuedAt = DateTime.UtcNow.AddMinutes(-1);

@@ -21,7 +21,8 @@ public sealed class TicketsController(IHelpdeskService helpdesk) : ControllerBas
     public async Task<IActionResult> Create([FromBody] CreateTicketBody body, CancellationToken ct)
     {
         var dto = await helpdesk.CreateTicketAsync(new CreateTicketRequest(
-            body.HostUnitId, body.Title!, body.Description!, body.Category!, body.Subcategory, body.Priority, body.AttachmentFileIds), ct);
+            body.HostUnitId, body.Title!, body.Description!, body.Category!, body.Subcategory, body.Priority, body.AttachmentFileIds,
+            body.CommunityId), ct);
         return Ok(ApiResult<TicketDto>.Ok(dto, string.Empty));
     }
 
@@ -151,8 +152,11 @@ public sealed class TicketsController(IHelpdeskService helpdesk) : ControllerBas
 
     public sealed class CreateTicketBody
     {
-        [Required(ErrorMessage = "hostUnitId is required")]
-        public Guid HostUnitId { get; init; }
+        /// <summary>Optional. Defaults to the logged-in resident's own unit.</summary>
+        public Guid? HostUnitId { get; init; }
+
+        /// <summary>Optional. Defaults to the logged-in user's community.</summary>
+        public Guid? CommunityId { get; init; }
 
         [Required(AllowEmptyStrings = false, ErrorMessage = "title is required")]
         [MaxLength(256)]

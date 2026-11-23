@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using System.Globalization;
 using System.Text;
 using App.Application.Abstractions;
@@ -46,7 +47,7 @@ public sealed class UnitService(
     IPageSizePolicy pageSizePolicy,
     IAsyncQueryExecutor executor,
     IAppCache cache,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IOptions<CacheOptions> cacheOptions)
     : IUnitService
 {
@@ -288,11 +289,11 @@ public sealed class UnitService(
 
     private string TenantScopeToken()
     {
-        if (tenant.IsPlatformSuperAdmin)
+        if (currentUser.IsSuperAdmin)
         {
             return "super";
         }
-        var ids = tenant.AuthorizedCommunityIds;
+        var ids = currentUser.AccessibleCommunityIds;
         if (ids.Count == 0)
         {
             return "none";
@@ -306,13 +307,13 @@ public sealed class UnitService(
     // reads are keyed under a single "super" generation (busted by any write) plus the bounded TTL.
     private async Task<string> ScopeGenerationTokenAsync(CancellationToken cancellationToken)
     {
-        if (tenant.IsPlatformSuperAdmin)
+        if (currentUser.IsSuperAdmin)
         {
             var superGen = await cache.GetGenerationAsync(UnitsCacheKeys.SuperGeneration, cancellationToken);
             return $"super:{superGen}";
         }
 
-        var ids = tenant.AuthorizedCommunityIds.OrderBy(id => id).ToList();
+        var ids = currentUser.AccessibleCommunityIds.OrderBy(id => id).ToList();
         if (ids.Count == 0)
         {
             return "none";

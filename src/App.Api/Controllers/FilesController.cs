@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Security;
 using App.Api.Security;
 using App.Application.Abstractions;
 using App.Application.Exceptions;
@@ -13,7 +14,7 @@ namespace App.Api.Controllers;
 [Route("api/v1/files")]
 public sealed class FilesController(
     IFileService files,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IImageCompressionService compression) : ControllerBase
 {
     [HttpPost]
@@ -35,7 +36,7 @@ public sealed class FilesController(
             throw new ValidationException("owningResourceType", "owningResourceType is required");
         }
 
-        if (!tenant.IsPlatformSuperAdmin && !tenant.AuthorizedCommunityIds.Contains(communityId))
+        if (!currentUser.CanAccessCommunity(communityId))
         {
             throw new ForbiddenException("You are not authorized for the target community.");
         }
@@ -76,7 +77,7 @@ public sealed class FilesController(
         {
             throw new ValidationException("owningResourceType", "owningResourceType is required");
         }
-        if (!tenant.IsPlatformSuperAdmin && !tenant.AuthorizedCommunityIds.Contains(body.CommunityId))
+        if (!currentUser.CanAccessCommunity(body.CommunityId))
         {
             throw new ForbiddenException("You are not authorized for the target community.");
         }

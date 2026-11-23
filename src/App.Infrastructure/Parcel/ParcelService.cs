@@ -37,7 +37,7 @@ public sealed class ParcelService(
     IOtpGenerator otpGenerator,
     IIdempotencyService idempotency,
     ISecurityOpsService securityOps,
-    ITenantContext tenant,
+    CurrentUser currentUser,
     IPageSizePolicy pageSizePolicy,
     IAsyncQueryExecutor executor)
     : IParcelService
@@ -710,7 +710,7 @@ public sealed class ParcelService(
             EventType = eventType,
             FromStatus = fromStatus,
             ToStatus = toStatus,
-            ActingUserId = tenant.UserId,
+            ActingUserId = currentUser.Actor,
             Detail = detail,
             OccurredAtUtc = clock.UtcNow,
         });
@@ -780,7 +780,7 @@ public sealed class ParcelService(
     /// the real path; this keeps the reuse honest rather than fabricating a reporter.
     /// </summary>
     private Guid ParseActingUserId() =>
-        Guid.TryParse(tenant.UserId, out var id) ? id : Guid.Empty;
+        (currentUser.UserId ?? Guid.Empty);
 
     /// <summary>
     /// Commit a verified handover (Req 30.4), run at-most-once inside the idempotency wrapper. Records
@@ -816,7 +816,7 @@ public sealed class ParcelService(
             CollectorRelationship = authorization.CollectorRelationship,
             VerificationMethod = authorization.VerificationMethod,
             ProofFileId = request.ProofFileId,
-            GuardUserId = tenant.UserId, // the handling guard, from the request context (unspoofable)
+            GuardUserId = currentUser.Actor, // the handling guard, from the request context (unspoofable)
             HandedOverAtUtc = now,
         };
         db.ParcelHandovers.Add(handover);
