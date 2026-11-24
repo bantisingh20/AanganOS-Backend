@@ -10,8 +10,8 @@ public interface IResidentOnboardingService
 
     Task<IReadOnlyList<PublicSocietytDto>> SearchSocietyAsync(string? search, CancellationToken cancellationToken = default);
 
-    /// <summary>Anonymous: search communities by name (capped). Returns minimal fields.</summary>
-    Task<IReadOnlyList<PublicCommunityDto>> SearchCommunitiesAsync(string? search, CancellationToken cancellationToken = default);
+    /// <summary>Anonymous: search communities by name or society/organization (capped). Returns minimal fields.</summary>
+    Task<IReadOnlyList<PublicCommunityDto>> SearchCommunitiesAsync(string? search, Guid? societyId = null, CancellationToken cancellationToken = default);
 
     /// <summary>Anonymous: the wing/block nodes of a community (its hierarchy), for the picker.</summary>
     Task<IReadOnlyList<PublicWingDto>> ListWingsAsync(Guid communityId, CancellationToken cancellationToken = default);
@@ -43,8 +43,8 @@ public interface IResidentOnboardingService
 }
 
 /// <summary>Minimal public community row for the onboarding search (no org/internal fields).</summary>
-public sealed record PublicCommunityDto(Guid Id, string Name, string CommunityType);
-public sealed record PublicSocietytDto(Guid Id, string Name);
+public sealed record PublicCommunityDto(Guid Id, string Name, string? CommunityType = null);
+public sealed record PublicSocietytDto(Guid Id, string Name, string? PropertyType = null);
 
 /// <summary>A wing/block node for the onboarding picker.</summary>
 public sealed record PublicWingDto(Guid Id, string Name, string Level, Guid? ParentId);

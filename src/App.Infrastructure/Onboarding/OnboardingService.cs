@@ -35,7 +35,7 @@ public sealed class OnboardingService(
         // --- Trust-boundary validation (anonymous input). ---
         var orgName = (request.OrganizationName ?? string.Empty).Trim();
         var communityName = (request.CommunityName ?? string.Empty).Trim();
-        var communityType = (request.CommunityType ?? string.Empty).Trim();
+        var propertyType = (request.PropertyType ?? request.CommunityType ?? string.Empty).Trim();
         var adminName = (request.AdminName ?? string.Empty).Trim();
         var email = string.IsNullOrWhiteSpace(request.AdminEmail) ? null : request.AdminEmail.Trim();
         var phone = string.IsNullOrWhiteSpace(request.AdminPhone) ? null : request.AdminPhone.Trim();
@@ -44,7 +44,6 @@ public sealed class OnboardingService(
         if (orgName.Length is 0) orgName = communityName;
         if (orgName.Length is 0 or > 256) throw new ValidationException("organizationName", "Organization name is required (max 256).");
         if (communityName.Length is 0 or > 256) throw new ValidationException("communityName", "Community name is required (max 256).");
-        if (communityType.Length is 0 or > 100) throw new ValidationException("communityType", "Community type is required.");
         if (adminName.Length is 0 or > 256) throw new ValidationException("adminName", "Your name is required (max 256).");
         if (email is null && phone is null) throw new ValidationException("adminIdentifier", "Provide an email or a phone number to sign in with.");
         if (string.IsNullOrEmpty(request.AdminPassword) || request.AdminPassword.Length < 6)
@@ -83,7 +82,7 @@ public sealed class OnboardingService(
         // 1) Organization = the SOCIETY. Each WING becomes its own Community under it (the community
         //    id is the tenant discriminator). Wing names come from the request; fall back to the
         //    single community name for the legacy single-wing shape.
-        var org = await orgs.CreateAsync(new CreateOrganizationRequest(orgName), cancellationToken);
+        var org = await orgs.CreateAsync(new CreateOrganizationRequest(orgName, propertyType), cancellationToken);
 
         var wingNames = NormalizeWings(request.Wings, communityName);
         if (wingNames.Count == 0)
@@ -101,7 +100,7 @@ public sealed class OnboardingService(
         {
             var wingCommunityName = FormatWingName(wing);
             var wingCommunity = await communities.CreateAsync(
-                new CreateCommunityRequest(org.Id, wingCommunityName, communityType), cancellationToken);
+                new CreateCommunityRequest(org.Id, wingCommunityName), cancellationToken);
             createdCommunities.Add((wingCommunity.Id, wingCommunity.Name));
 
             await GenerateUnitsAsync(sp, wingCommunity.Id, wing, request.Floors, request.RoomsPerFloor, cancellationToken);

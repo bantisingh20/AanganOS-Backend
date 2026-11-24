@@ -22,6 +22,12 @@ namespace App.Domain.Community;
 /// </summary>
 public class Announcement : TenantOwnedEntity
 {
+    /// <summary>Owning organization (Society). Nullable for backward compatibility.</summary>
+    public Guid? OrganizationId { get; set; }
+
+    /// <summary>Scope of the announcement: "Society" (all wings) or "Wing" (specific community).</summary>
+    public string? Scope { get; set; }
+
     /// <summary>Short headline for the announcement. Required.</summary>
     public string Title { get; set; } = string.Empty;
 

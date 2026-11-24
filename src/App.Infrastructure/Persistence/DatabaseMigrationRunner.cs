@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Logging;
 
 namespace App.Infrastructure.Persistence;
@@ -16,6 +17,9 @@ public static class DatabaseMigrationRunner
         string? scriptsDirectory = null,
         CancellationToken cancellationToken = default)
     {
+        // 0. Automatically sync schema (tables, missing columns, indexes) from C# Entities
+        await AutoSyncSchemaAsync(db, logger, cancellationToken);
+
         // 1. Ensure __DatabaseMigrations tracking table exists
         await EnsureTrackingTableExistsAsync(db, cancellationToken);
 
@@ -75,7 +79,6 @@ public static class DatabaseMigrationRunner
                 .ToArray();
 
             var sw = Stopwatch.StartNew();
-            var success = false;
 
             try
             {
@@ -86,7 +89,6 @@ public static class DatabaseMigrationRunner
                 }
 
                 sw.Stop();
-                success = true;
 
                 await RecordMigrationAsync(db, fileName, cancellationToken);
                 await tx.CommitAsync(cancellationToken);
@@ -108,6 +110,127 @@ public static class DatabaseMigrationRunner
 
                 throw;
             }
+        }
+    }
+
+    public static async Task AutoSyncSchemaAsync(
+        AppDbContext db,
+        ILogger logger,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var entityTypes = db.Model.GetEntityTypes();
+            var conn = db.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open)
+            {
+                await conn.OpenAsync(cancellationToken);
+            }
+
+            foreach (var entityType in entityTypes)
+            {
+                var tableName = entityType.GetTableName();
+                if (string.IsNullOrWhiteSpace(tableName)) continue;
+
+                var schema = entityType.GetSchema() ?? "dbo";
+                var storeObject = StoreObjectIdentifier.Table(tableName, schema);
+
+                // 1. Check if table exists in SQL Server
+                var tableExistsSql = $"SELECT 1 FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.schema_id WHERE t.name = '{tableName}' AND s.name = '{schema}';";
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = tableExistsSql;
+                    var exists = await cmd.ExecuteScalarAsync(cancellationToken);
+                    if (exists is null)
+                    {
+                        logger.LogInformation("[AutoSyncSchema] Table [{Schema}].[{Table}] does not exist. Creating table...", schema, tableName);
+                        var columnDefs = new List<string>();
+                        foreach (var prop in entityType.GetProperties())
+                        {
+                            var colName = prop.GetColumnName(storeObject) ?? prop.Name;
+                            var colType = prop.GetColumnType(storeObject) ?? "nvarchar(max)";
+                            var nullable = prop.IsColumnNullable(storeObject) ? "NULL" : "NOT NULL";
+                            columnDefs.Add($"[{colName}] {colType} {nullable}");
+                        }
+
+                        var pk = entityType.FindPrimaryKey();
+                        if (pk != null && pk.Properties.Count > 0)
+                        {
+                            var pkCols = string.Join(", ", pk.Properties.Select(p => $"[{p.GetColumnName(storeObject) ?? p.Name}]"));
+                            columnDefs.Add($"CONSTRAINT [PK_{tableName}] PRIMARY KEY ({pkCols})");
+                        }
+
+                        var createTableSql = $"CREATE TABLE [{schema}].[{tableName}] (\n  {string.Join(",\n  ", columnDefs)}\n);";
+                        await db.Database.ExecuteSqlRawAsync(createTableSql, cancellationToken);
+                        logger.LogInformation("[AutoSyncSchema] Created table [{Schema}].[{Table}].", schema, tableName);
+                        continue;
+                    }
+                }
+
+                // 2. Table exists: check and add any missing columns
+                foreach (var prop in entityType.GetProperties())
+                {
+                    var colName = prop.GetColumnName(storeObject) ?? prop.Name;
+                    var colType = prop.GetColumnType(storeObject)
+                        ?? (prop.ClrType == typeof(Guid) || prop.ClrType == typeof(Guid?) ? "uniqueidentifier"
+                            : prop.ClrType == typeof(string) ? "nvarchar(max)"
+                            : prop.ClrType == typeof(int) || prop.ClrType == typeof(int?) ? "int"
+                            : prop.ClrType == typeof(bool) || prop.ClrType == typeof(bool?) ? "bit"
+                            : prop.ClrType == typeof(DateTime) || prop.ClrType == typeof(DateTime?) ? "datetime2"
+                            : "nvarchar(max)");
+
+                    try
+                    {
+                        var checkColSql = $"SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('[{schema}].[{tableName}]') AND name = '{colName}';";
+                        using var cmd = conn.CreateCommand();
+                        cmd.CommandText = checkColSql;
+                        var colExists = await cmd.ExecuteScalarAsync(cancellationToken);
+                        if (colExists is null)
+                        {
+                            logger.LogInformation("[AutoSyncSchema] Adding missing column [{Table}].[{Column}] ({Type})...", tableName, colName, colType);
+                            cmd.CommandText = $"ALTER TABLE [{schema}].[{tableName}] ADD [{colName}] {colType} NULL;";
+                            await cmd.ExecuteNonQueryAsync(cancellationToken);
+                            logger.LogInformation("[AutoSyncSchema] Successfully added column [{Table}].[{Column}].", tableName, colName);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "[AutoSyncSchema] Could not add column [{Table}].[{Column}]: {Message}", tableName, colName, ex.Message);
+                    }
+                }
+
+                // 3. Check and add any missing indexes
+                foreach (var index in entityType.GetIndexes())
+                {
+                    var indexName = index.GetDatabaseName(storeObject) ?? index.GetDatabaseName();
+                    if (string.IsNullOrWhiteSpace(indexName)) continue;
+
+                    try
+                    {
+                        var checkIndexSql = $"SELECT 1 FROM sys.indexes WHERE name = '{indexName}' AND object_id = OBJECT_ID('[{schema}].[{tableName}]');";
+                        using var cmd = conn.CreateCommand();
+                        cmd.CommandText = checkIndexSql;
+                        var indexExists = await cmd.ExecuteScalarAsync(cancellationToken);
+                        if (indexExists is null)
+                        {
+                            var indexCols = string.Join(", ", index.Properties.Select(p => $"[{p.GetColumnName(storeObject) ?? p.Name}]"));
+                            var unique = index.IsUnique ? "UNIQUE" : "";
+                            cmd.CommandText = $"CREATE {unique} INDEX [{indexName}] ON [{schema}].[{tableName}] ({indexCols});";
+                            logger.LogInformation("[AutoSyncSchema] Creating missing index [{Index}] on [{Table}]...", indexName, tableName);
+                            await cmd.ExecuteNonQueryAsync(cancellationToken);
+                            logger.LogInformation("[AutoSyncSchema] Created index [{Index}] on [{Table}].", indexName, tableName);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "[AutoSyncSchema] Failed to create index [{Index}] on [{Table}]: {Message}", indexName, tableName, ex.Message);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[AutoSyncSchema] Schema auto-sync encountered an error: {Message}", ex.Message);
         }
     }
 

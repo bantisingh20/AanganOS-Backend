@@ -22,7 +22,7 @@ public sealed class CommunityEntityConfiguration : IEntityTypeConfiguration<Doma
         builder.HasKey(c => c.Id);
 
         builder.Property(c => c.Name).IsRequired().HasMaxLength(200);
-        builder.Property(c => c.CommunityType).IsRequired().HasMaxLength(100);
+        builder.Property(c => c.CommunityType).HasMaxLength(100).IsRequired(false);
 
         // "Which communities belong to this organization?" lookups.
         builder.HasIndex(c => c.OrganizationId)
@@ -53,15 +53,19 @@ public sealed class AnnouncementEntityConfiguration : IEntityTypeConfiguration<A
         builder.ToTable("Announcements");
         builder.HasKey(a => a.Id);
 
+        builder.Property(a => a.OrganizationId).IsRequired(false);
+        builder.Property(a => a.Scope).HasMaxLength(50).IsRequired(false);
         builder.Property(a => a.Title).IsRequired().HasMaxLength(200);
         builder.Property(a => a.Body).IsRequired().HasMaxLength(4000);
         builder.Property(a => a.Category).IsRequired().HasMaxLength(50);
         // Reversible board-visibility flag (admin activate/deactivate). Defaults to true.
         builder.Property(a => a.IsActive).HasDefaultValue(true);
 
-        // The board's newest-first list as a single indexed read, no N+1.
+        // Indexes for community and organization queries
         builder.HasIndex(a => new { a.CommunityId, a.PublishedAtUtc })
             .HasDatabaseName("IX_Announcement_CommunityId_PublishedAtUtc");
+        builder.HasIndex(a => new { a.OrganizationId, a.PublishedAtUtc })
+            .HasDatabaseName("IX_Announcement_OrganizationId_PublishedAtUtc");
     }
 }
 
@@ -110,6 +114,7 @@ public sealed class OrganizationEntityConfiguration : IEntityTypeConfiguration<O
         builder.HasKey(o => o.Id);
 
         builder.Property(o => o.Name).IsRequired().HasMaxLength(200);
+        builder.Property(o => o.PropertyType).HasMaxLength(100).IsRequired(false);
     }
 }
 

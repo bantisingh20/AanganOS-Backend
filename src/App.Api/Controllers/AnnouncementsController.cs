@@ -70,7 +70,7 @@ public sealed class AnnouncementsController(IAnnouncementService announcements) 
     public async Task<IActionResult> Create([FromBody] CreateAnnouncementBody body, CancellationToken ct)
     {
         var dto = await announcements.CreateAnnouncementAsync(
-            new CreateAnnouncementRequest(body.CommunityId, body.Title!, body.Body!, body.Category!), ct);
+            new CreateAnnouncementRequest(body.Title!, body.Body!, body.Category!, body.CommunityId, body.OrganizationId), ct);
         return Ok(ApiResult<AnnouncementDto>.Ok(dto, string.Empty));
     }
 
@@ -113,8 +113,9 @@ public sealed class AnnouncementsController(IAnnouncementService announcements) 
 
     public sealed class CreateAnnouncementBody
     {
-        [Required(ErrorMessage = "communityId is required")]
-        public Guid CommunityId { get; init; }
+        public Guid? CommunityId { get; init; }
+
+        public Guid? OrganizationId { get; init; }
 
         [Required(AllowEmptyStrings = false, ErrorMessage = "title is required")]
         [MaxLength(200)]

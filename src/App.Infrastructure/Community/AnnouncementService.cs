@@ -29,7 +29,8 @@ public sealed class AnnouncementService(
     IClock clock,
     IAuthorizationGuard authorizationGuard,
     IPageSizePolicy pageSizePolicy,
-    IAsyncQueryExecutor executor)
+    IAsyncQueryExecutor executor,
+    CurrentUser currentUser)
     : IAnnouncementService
 {
     // Allow-list for the announcement list endpoint. Only these fields reach the query — no arbitrary
@@ -41,8 +42,11 @@ public sealed class AnnouncementService(
             .Sortable("publishedAtUtc", a => a.PublishedAtUtc)
             .Sortable("title", a => a.Title)
             .Sortable("category", a => a.Category)
+            .Sortable("scope", a => a.Scope)
             .Filterable("category", a => a.Category)
             .Filterable("communityId", a => a.CommunityId)
+            .Filterable("organizationId", a => a.OrganizationId)
+            .Filterable("scope", a => a.Scope)
             .Filterable("publishedAtUtc", a => a.PublishedAtUtc)
             .Searchable(a => a.Title)
             .Searchable(a => a.Body);
@@ -70,15 +74,29 @@ public sealed class AnnouncementService(
         var paged = await q.ToPagedResultAsync(
             parameters, AnnouncementQueryConfig, ToDto, pageSizePolicy, executor, cancellationToken);
 
-        var names = await UnitService.ResolveCommunityOrgNamesAsync(
-            db, paged.Items.Select(a => a.CommunityId), cancellationToken);
+        var commIds = paged.Items.Select(a => a.CommunityId).Where(id => id != Guid.Empty).Distinct();
+        var names = await UnitService.ResolveCommunityOrgNamesAsync(db, commIds, cancellationToken);
+
+        var orgIds = paged.Items.Where(a => a.OrganizationId.HasValue).Select(a => a.OrganizationId!.Value).Distinct().ToList();
+        var orgNames = orgIds.Count == 0 ? new Dictionary<Guid, string>() :
+            await db.Organizations.AsNoTracking().IgnoreQueryFilters()
+                .Where(o => orgIds.Contains(o.Id))
+                .ToDictionaryAsync(o => o.Id, o => o.Name, cancellationToken);
 
         return new PagedData<AnnouncementDto>
         {
             Items = paged.Items
-                .Select(a => names.TryGetValue(a.CommunityId, out var n)
-                    ? a with { CommunityName = n.Community, OrganizationName = n.Organization }
-                    : a)
+                .Select(a =>
+                {
+                    names.TryGetValue(a.CommunityId, out var n);
+                    string? orgName = n.Organization;
+                    if (string.IsNullOrEmpty(orgName) && a.OrganizationId.HasValue && orgNames.TryGetValue(a.OrganizationId.Value, out var on))
+                    {
+                        orgName = on;
+                    }
+                    string? commName = a.CommunityId == Guid.Empty ? "All Wings" : n.Community;
+                    return a with { CommunityName = commName, OrganizationName = orgName };
+                })
                 .ToList(),
             Page = paged.Page,
             PageSize = paged.PageSize,
@@ -104,15 +122,56 @@ public sealed class AnnouncementService(
         {
             throw new ForbiddenException("You do not have permission to publish announcements.");
         }
-        authorizationGuard.EnsureCommunityAuthorized(request.CommunityId);
 
         var title = RequireText(request.Title, "title", "A title is required.");
         var body = RequireText(request.Body, "body", "A message body is required.");
-        var category = await RequireValidCategoryAsync(request.Category, request.CommunityId, cancellationToken);
+
+        Guid? orgId = request.OrganizationId ?? currentUser.OrganizationId;
+        Guid commId = request.CommunityId ?? Guid.Empty;
+
+        // If a wing/community is specified but organization is not, resolve organization from the community
+        if (commId != Guid.Empty && orgId == null)
+        {
+            var commRecord = await db.Communities.AsNoTracking().FirstOrDefaultAsync(c => c.Id == commId, cancellationToken);
+            if (commRecord != null)
+            {
+                orgId = commRecord.OrganizationId;
+            }
+        }
+
+        if (orgId == null)
+        {
+            throw new ValidationException("organizationId", "An organization (society) must be selected for this announcement.");
+        }
+
+        bool isOrgLevel = currentUser.IsSuperAdmin || currentUser.IsOrganizationAdmin || currentUser.IsInRole("SocietyAdmin");
+        string scope;
+
+        if (isOrgLevel && commId == Guid.Empty)
+        {
+            scope = "Society";
+        }
+        else
+        {
+            if (commId == Guid.Empty)
+            {
+                commId = currentUser.CommunityId ?? Guid.Empty;
+            }
+            scope = commId != Guid.Empty ? "Wing" : "Society";
+        }
+
+        if (commId != Guid.Empty)
+        {
+            authorizationGuard.EnsureCommunityAuthorized(commId);
+        }
+
+        var category = await RequireValidCategoryAsync(request.Category, commId != Guid.Empty ? commId : null, cancellationToken);
 
         var announcement = new DomainAnnouncement
         {
-            CommunityId = request.CommunityId,
+            OrganizationId = orgId,
+            CommunityId = commId,
+            Scope = scope,
             Title = title,
             Body = body,
             Category = category,
@@ -209,13 +268,14 @@ public sealed class AnnouncementService(
     }
 
     /// <summary>Validate a category code against the configurable Announcement_Category list (per community).</summary>
-    private async Task<string> RequireValidCategoryAsync(string? category, Guid communityId, CancellationToken cancellationToken)
+    private async Task<string> RequireValidCategoryAsync(string? category, Guid? communityId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(category))
         {
             throw new ValidationException("category", "A category is required.");
         }
-        var allowed = await config.GetMasterDataAsync(MasterDataKeys.AnnouncementCategory, communityId, cancellationToken: cancellationToken);
+        var allowed = await config.GetMasterDataAsync(
+            MasterDataKeys.AnnouncementCategory, communityId.HasValue && communityId.Value != Guid.Empty ? communityId.Value : null, cancellationToken: cancellationToken);
         var trimmed = category.Trim();
         if (!allowed.Any(e => string.Equals(e.Code, trimmed, StringComparison.Ordinal)))
         {
@@ -234,5 +294,5 @@ public sealed class AnnouncementService(
     }
 
     private static AnnouncementDto ToDto(DomainAnnouncement a) =>
-        new(a.Id, a.CommunityId, a.Title, a.Body, a.Category, a.PublishedAtUtc, a.IsActive);
+        new(a.Id, a.CommunityId, a.OrganizationId, a.Title, a.Body, a.Category, a.PublishedAtUtc, a.IsActive, Scope: a.Scope);
 }

@@ -83,6 +83,7 @@ public static class DependencyInjection
         Settings<MessageOutboxWorkerOptions>(MessageOutboxWorkerOptions.SectionName);
         Settings<IdempotencyOptions>(IdempotencyOptions.SectionName);
         services.AddOptions<SmtpOptions>().Bind(configuration.GetSection(SmtpOptions.SectionName)); // optional, not validated
+        services.AddOptions<SmsOptions>().Bind(configuration.GetSection(SmsOptions.SectionName));
 
         // ---------------------------------------------------------- database + logged-in user
         // Anonymous by default (sees nothing). The API swaps in the token user (AuthSetup.AddJwtLogin);
@@ -213,6 +214,7 @@ public static class DependencyInjection
         services.AddScoped<IEmailChannelSender, SmtpEmailChannelSender>();
         services.TryAddScoped<ISmsChannelSender, NotConfiguredSmsChannelSender>();
         services.TryAddScoped<IWhatsAppChannelSender, NotConfiguredWhatsAppChannelSender>();
+        services.AddScoped<ICommunicationTestService, CommunicationTestService>();
 
         return services;
     }

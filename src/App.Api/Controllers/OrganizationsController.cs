@@ -20,7 +20,7 @@ public sealed class OrganizationsController(IOrganizationService orgs) : Control
     [RequirePermission(PermissionAction.Create, "Organization")]
     public async Task<IActionResult> Create([FromBody] CreateOrganizationBody body, CancellationToken ct)
     {
-        var dto = await orgs.CreateAsync(new CreateOrganizationRequest(body.Name!), ct);
+        var dto = await orgs.CreateAsync(new CreateOrganizationRequest(body.Name!, body.PropertyType), ct);
         return Ok(ApiResult<OrganizationDto>.Ok(dto, string.Empty));
     }
 
@@ -59,7 +59,7 @@ public sealed class OrganizationsController(IOrganizationService orgs) : Control
     [RequirePermission(PermissionAction.Edit, "Organization")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateOrganizationBody body, CancellationToken ct)
     {
-        var dto = await orgs.UpdateAsync(id, new UpdateOrganizationRequest(body.Name), ct);
+        var dto = await orgs.UpdateAsync(id, new UpdateOrganizationRequest(body.Name, body.PropertyType), ct);
         return Ok(ApiResult<OrganizationDto>.Ok(dto, string.Empty));
     }
 
@@ -86,11 +86,17 @@ public sealed class OrganizationsController(IOrganizationService orgs) : Control
         [Required(AllowEmptyStrings = false, ErrorMessage = "name is required")]
         [MaxLength(256)]
         public string? Name { get; init; }
+
+        [MaxLength(100)]
+        public string? PropertyType { get; init; }
     }
 
     public sealed class UpdateOrganizationBody
     {
         [MaxLength(256)]
         public string? Name { get; init; }
+
+        [MaxLength(100)]
+        public string? PropertyType { get; init; }
     }
 }

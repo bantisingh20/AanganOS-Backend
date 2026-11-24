@@ -22,9 +22,9 @@ public sealed class ResidentOnboardingController(IResidentOnboardingService svc)
 
     [HttpGet("api/v1/public/communities")]
     [EnableRateLimiting(RateLimitingExtensions.AuthPolicy)]
-    public async Task<IActionResult> SearchCommunities([FromQuery] string? search, CancellationToken ct)
+    public async Task<IActionResult> SearchCommunities([FromQuery] string? search, [FromQuery] Guid? societyId, CancellationToken ct)
     {
-        var items = await svc.SearchCommunitiesAsync(search, ct);
+        var items = await svc.SearchCommunitiesAsync(search, societyId, ct);
         return Ok(ApiResult<IReadOnlyList<PublicCommunityDto>>.Ok(items, string.Empty));
     }
 

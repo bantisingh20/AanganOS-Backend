@@ -36,8 +36,7 @@ public class Community : TenantOwnedEntity
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// Configurable community-type code resolved against the <c>Community_Type</c> master-data list
-    /// (Req 12.2). Stored as the stable machine code (e.g. <c>apartment_society</c>), never an enum.
+    /// Optional community-type code (property type is now stored at the Organization / Society level).
     /// </summary>
-    public string CommunityType { get; set; } = string.Empty;
+    public string? CommunityType { get; set; }
 }

@@ -21,7 +21,7 @@ public sealed class CommunitiesController(ICommunityService communities) : Contr
     public async Task<IActionResult> Create([FromBody] CreateCommunityBody body, CancellationToken ct)
     {
         var dto = await communities.CreateAsync(
-            new CreateCommunityRequest(body.OrganizationId, body.Name!, body.CommunityType!), ct);
+            new CreateCommunityRequest(body.OrganizationId, body.Name!, body.CommunityType), ct);
         return Ok(ApiResult<CommunityDto>.Ok(dto, string.Empty));
     }
 
@@ -95,7 +95,6 @@ public sealed class CommunitiesController(ICommunityService communities) : Contr
         [MaxLength(256)]
         public string? Name { get; init; }
 
-        [Required(AllowEmptyStrings = false, ErrorMessage = "communityType is required")]
         [MaxLength(100)]
         public string? CommunityType { get; init; }
     }

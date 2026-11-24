@@ -52,14 +52,17 @@ public sealed class CommunityService(
     {
         ArgumentNullException.ThrowIfNull(request);
         RequireName(request.Name);
-        await RequireValidCommunityTypeAsync(request.CommunityType, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(request.CommunityType))
+        {
+            await RequireValidCommunityTypeAsync(request.CommunityType, cancellationToken);
+        }
         await RequireOrganizationExistsAsync(request.OrganizationId, cancellationToken);
 
         var community = new CommunityEntity
         {
             OrganizationId = request.OrganizationId,
             Name = request.Name.Trim(),
-            CommunityType = request.CommunityType.Trim(),
+            CommunityType = string.IsNullOrWhiteSpace(request.CommunityType) ? null : request.CommunityType.Trim(),
         };
         // The tenant discriminator for a community IS its own id (Req 12.1): all child data will
         // carry this value, and the global tenant filter scopes this row to the owning tenant.
@@ -90,8 +93,15 @@ public sealed class CommunityService(
 
         if (request.CommunityType is not null)
         {
-            await RequireValidCommunityTypeAsync(request.CommunityType, cancellationToken);
-            community.CommunityType = request.CommunityType.Trim();
+            if (!string.IsNullOrWhiteSpace(request.CommunityType))
+            {
+                await RequireValidCommunityTypeAsync(request.CommunityType, cancellationToken);
+                community.CommunityType = request.CommunityType.Trim();
+            }
+            else
+            {
+                community.CommunityType = null;
+            }
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -172,7 +182,7 @@ public sealed class CommunityService(
     {
         if (string.IsNullOrWhiteSpace(communityType))
         {
-            throw new ValidationException("communityType", "A community type is required.");
+            return;
         }
 
         // Validate against the configurable Community_Type list resolved at runtime (Req 12.2) —

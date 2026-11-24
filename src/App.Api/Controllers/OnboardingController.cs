@@ -19,6 +19,7 @@ public sealed class OnboardingController(IOnboardingService onboarding) : Contro
             new CreateCommunityOnboardingRequest(
                 body.OrganizationName,
                 body.CommunityName,
+                body.PropertyType ?? body.CommunityType,
                 body.CommunityType,
                 body.AdminName,
                 body.AdminEmail,
@@ -49,9 +50,11 @@ public sealed class OnboardingController(IOnboardingService onboarding) : Contro
 
         public List<string>? Wings { get; init; }
 
-        [Required(AllowEmptyStrings = false, ErrorMessage = "communityType is required")]
         [MaxLength(100)]
-        public string CommunityType { get; init; } = string.Empty;
+        public string? PropertyType { get; init; }
+
+        [MaxLength(100)]
+        public string? CommunityType { get; init; }
 
         [Required(AllowEmptyStrings = false, ErrorMessage = "adminName is required")]
         [MaxLength(256)]

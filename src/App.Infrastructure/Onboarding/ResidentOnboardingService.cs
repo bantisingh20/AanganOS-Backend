@@ -57,15 +57,19 @@ public sealed class ResidentOnboardingService(
         if (term.Length > 0) q = q.Where(c => c.Name.Contains(term));
         return await q.OrderBy(c => c.Name)
             .Take(MaxSearchResults)
-            .Select(c => new PublicSocietytDto(c.Id, c.Name))
+            .Select(c => new PublicSocietytDto(c.Id, c.Name, c.PropertyType))
             .ToListAsync(cancellationToken);
     }
-    public async Task<IReadOnlyList<PublicCommunityDto>> SearchCommunitiesAsync(string? search, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PublicCommunityDto>> SearchCommunitiesAsync(string? search, Guid? societyId = null, CancellationToken cancellationToken = default)
     {
         // Anonymous caller: bypass the tenant filter with IgnoreQueryFilters (soft-delete still
         // applied explicitly) so the public picker can see communities. Minimal fields, capped.
         var term = (search ?? string.Empty).Trim();
         var q = db.Communities.IgnoreQueryFilters().AsNoTracking().Where(c => !c.IsDeleted);
+        if (societyId.HasValue && societyId.Value != Guid.Empty)
+        {
+            q = q.Where(c => c.OrganizationId == societyId.Value);
+        }
         if (term.Length > 0) q = q.Where(c => c.Name.Contains(term));
         return await q.OrderBy(c => c.Name)
             .Take(MaxSearchResults)

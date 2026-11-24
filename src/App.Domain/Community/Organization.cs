@@ -14,4 +14,7 @@ public class Organization : PlatformEntity
 {
     /// <summary>Human-readable organization name. Required.</summary>
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>Property / community type code (e.g. apartment_society, gated_community, villa_bungalow).</summary>
+    public string? PropertyType { get; set; }
 }

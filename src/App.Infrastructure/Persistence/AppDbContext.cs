@@ -226,7 +226,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, CurrentUser cu
                 }
             }
 
-            if (typeof(TenantOwnedEntity).IsAssignableFrom(clrType))
+            if (clrType == typeof(Announcement))
+            {
+                ApplyAnnouncementFilter(modelBuilder);
+            }
+            else if (typeof(TenantOwnedEntity).IsAssignableFrom(clrType))
             {
                 var hasUnitScope = typeof(IUnitScoped).IsAssignableFrom(clrType);
 
@@ -254,6 +258,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, CurrentUser cu
         }
     }
 
+
+    private void ApplyAnnouncementFilter(ModelBuilder modelBuilder) =>
+        modelBuilder.Entity<Announcement>().HasQueryFilter(e =>
+            !e.IsDeleted &&
+            (IsSuperAdmin ||
+             (_currentUser.OrganizationId != null && e.OrganizationId == _currentUser.OrganizationId && (e.CommunityId == Guid.Empty || _currentUser.AccessibleCommunityIds.Contains(e.CommunityId))) ||
+             _currentUser.AccessibleCommunityIds.Contains(e.CommunityId)));
 
     private void ApplyTenantFilter<TEntity>(ModelBuilder modelBuilder)
         where TEntity : TenantOwnedEntity =>

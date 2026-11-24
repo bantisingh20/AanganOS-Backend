@@ -32,6 +32,8 @@ public sealed class OrganizationService(
         new ListQueryConfiguration<Organization>()
             .WithDefaultSort(o => o.Name)
             .Sortable("name", o => o.Name)
+            .Sortable("propertyType", o => o.PropertyType)
+            .Filterable("propertyType", o => o.PropertyType)
             .Searchable(o => o.Name);
 
     public async Task<OrganizationDto> CreateAsync(CreateOrganizationRequest request, CancellationToken cancellationToken = default)
@@ -39,7 +41,11 @@ public sealed class OrganizationService(
         ArgumentNullException.ThrowIfNull(request);
         RequireName(request.Name);
 
-        var org = new Organization { Name = request.Name.Trim() };
+        var org = new Organization
+        {
+            Name = request.Name.Trim(),
+            PropertyType = string.IsNullOrWhiteSpace(request.PropertyType) ? null : request.PropertyType.Trim(),
+        };
         db.Organizations.Add(org);
         await db.SaveChangesAsync(cancellationToken);
 
@@ -61,6 +67,11 @@ public sealed class OrganizationService(
         {
             RequireName(request.Name);
             org.Name = request.Name.Trim();
+        }
+
+        if (request.PropertyType is not null)
+        {
+            org.PropertyType = string.IsNullOrWhiteSpace(request.PropertyType) ? null : request.PropertyType.Trim();
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -290,7 +301,7 @@ public sealed class OrganizationService(
         }
     }
 
-    private static OrganizationDto ToDto(Organization o) => new(o.Id, o.Name, o.IsDeleted);
+    private static OrganizationDto ToDto(Organization o) => new(o.Id, o.Name, o.PropertyType, o.IsDeleted);
 
     private static void RequireName(string? name)
     {
