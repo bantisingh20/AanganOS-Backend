@@ -121,39 +121,38 @@ public sealed class OrganizationService(
         if (orgIds.Count == 0)
             return paged;
 
-        var data = await (
+        // 1. Community counts per organization
+        var communityCounts = await db.Communities.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => orgIds.Contains(c.OrganizationId) && !c.IsDeleted)
+            .GroupBy(c => c.OrganizationId)
+            .Select(g => new { OrganizationId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.OrganizationId, x => x.Count, cancellationToken);
+
+        // 2. Active admin check per organization
+        var activeAdminOrgIds = (await (
             from c in db.Communities.AsNoTracking().IgnoreQueryFilters()
-            where orgIds.Contains(c.OrganizationId)
-            join u in db.Users.AsNoTracking().IgnoreQueryFilters()
-                on c.Id equals u.CommunityId
+            where orgIds.Contains(c.OrganizationId) && !c.IsDeleted
+            join u in db.Users.AsNoTracking().IgnoreQueryFilters() on c.Id equals u.CommunityId
             where !u.IsDeleted &&
                   u.Status == App.Domain.Identity.UserStatus.Active &&
                   u.RoleId != null
-            group c by c.OrganizationId into g
-            select new
-            {
-                OrganizationId = g.Key,
-                CommunityCount = g.Select(x => x.Id).Distinct().Count(),
-                HasActiveAdmin = g.Any(),
-                ExpiryData = subscription.BuildDtoAsync(g.Key, cancellationToken).Result
-            }
-        ).ToListAsync(cancellationToken);
+            select c.OrganizationId
+        ).Distinct().ToListAsync(cancellationToken)).ToHashSet();
 
-        var orgData = data.ToDictionary(x => x.OrganizationId);
+        // 3. Subscription/Expiry data per organization (run sequentially to avoid MARS connection conflicts)
+        var expiryMap = new Dictionary<Guid, SubscriptionDto>();
+        foreach (var id in orgIds)
+        {
+            expiryMap[id] = await subscription.BuildDtoAsync(id, cancellationToken);
+        }
 
         return new PagedData<OrganizationDto>
         {
-            Items = paged.Items.Select(o =>
+            Items = paged.Items.Select(o => o with
             {
-                orgData.TryGetValue(o.Id, out var org);
-
-                return o with
-                {
-                    HasActiveAdmin = org != null && org.HasActiveAdmin,
-                    CommunityCount = org?.CommunityCount ?? 0,
-                    ExpiryData = org?.ExpiryData,
-
-                };
+                HasActiveAdmin = activeAdminOrgIds.Contains(o.Id),
+                CommunityCount = communityCounts.GetValueOrDefault(o.Id, 0),
+                ExpiryData = expiryMap.GetValueOrDefault(o.Id),
             }).ToList(),
             Page = paged.Page,
             PageSize = paged.PageSize,

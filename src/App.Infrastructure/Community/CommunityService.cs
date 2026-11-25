@@ -62,7 +62,7 @@ public sealed class CommunityService(
         {
             OrganizationId = request.OrganizationId,
             Name = request.Name.Trim(),
-            CommunityType = string.IsNullOrWhiteSpace(request.CommunityType) ? null : request.CommunityType.Trim(),
+            CommunityType = string.IsNullOrWhiteSpace(request.CommunityType) ? "apartment_society" : request.CommunityType.Trim(),
         };
         // The tenant discriminator for a community IS its own id (Req 12.1): all child data will
         // carry this value, and the global tenant filter scopes this row to the owning tenant.

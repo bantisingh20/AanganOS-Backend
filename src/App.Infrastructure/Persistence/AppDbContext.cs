@@ -31,6 +31,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, CurrentUser cu
     public DbSet<MasterDataItem> MasterDataItems => Set<MasterDataItem>();
 
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<App.Domain.Diagnostics.ErrorLog> ErrorLogs => Set<App.Domain.Diagnostics.ErrorLog>();
 
     public DbSet<User> Users => Set<User>();
     public DbSet<Role> Roles => Set<Role>();

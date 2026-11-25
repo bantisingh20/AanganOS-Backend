@@ -95,12 +95,16 @@ public sealed class OnboardingService(
         //    apartment/available master-data codes (seeded platform-wide). Bounds are enforced per
         //    wing against the configured bulk ceiling so a registration can never create an unbounded
         //    set.
+        var commType = !string.IsNullOrWhiteSpace(request.CommunityType)
+            ? request.CommunityType.Trim()
+            : (!string.IsNullOrWhiteSpace(request.PropertyType) ? request.PropertyType.Trim() : "apartment_society");
+
         var createdCommunities = new List<(Guid Id, string Name)>();
         foreach (var wing in wingNames)
         {
             var wingCommunityName = FormatWingName(wing);
             var wingCommunity = await communities.CreateAsync(
-                new CreateCommunityRequest(org.Id, wingCommunityName), cancellationToken);
+                new CreateCommunityRequest(org.Id, wingCommunityName, commType), cancellationToken);
             createdCommunities.Add((wingCommunity.Id, wingCommunity.Name));
 
             await GenerateUnitsAsync(sp, wingCommunity.Id, wing, request.Floors, request.RoomsPerFloor, cancellationToken);

@@ -136,6 +136,7 @@ public static class DependencyInjection
         services.AddScoped<IPageSizePolicy, ConfigPageSizePolicy>();
         services.AddScoped<IConfigService, ConfigService>();
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<App.Application.Diagnostics.IErrorLogService, App.Infrastructure.Diagnostics.ErrorLogService>();
         services.AddScoped<IConfigAuditSink, AuditConfigAuditSink>();
         services.AddScoped<IIdempotencyService, IdempotencyService>();
 
