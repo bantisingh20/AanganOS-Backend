@@ -57,6 +57,14 @@ public sealed class ConfigController(IConfigService config) : ControllerBase
         return Ok(ApiResult<ConfigValueResponse>.Ok(new ConfigValueResponse(key, communityId, request.Value), string.Empty));
     }
 
+    [HttpGet("api/v1/master-data-keys")]
+    [Authorize]
+    public async Task<IActionResult> ListMasterDataKeys(CancellationToken ct)
+    {
+        var keys = await config.ListMasterDataKeysAsync(ct);
+        return Ok(ApiResult<IReadOnlyList<string>>.Ok(keys, string.Empty));
+    }
+
     [HttpGet("api/v1/master-data/{listKey}")]
     [Authorize]
     public async Task<IActionResult> GetMasterData(

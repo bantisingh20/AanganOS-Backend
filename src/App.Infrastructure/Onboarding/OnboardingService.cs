@@ -24,6 +24,7 @@ public sealed class OnboardingService(
     IConfiguration configuration,
     IPasswordHasher passwordHasher) : IOnboardingService
 {
+    private const string OrgAdminRoleName = "OrganizationAdmin";
     private const string CommunityAdminRoleName = "CommunityAdmin";
 
     public async Task<OnboardingResult> CreateCommunityAsync(
@@ -67,17 +68,28 @@ public sealed class OnboardingService(
             throw new ConflictException("An account with that email or phone already exists.");
         }
 
+        // Reject duplicate organization / society name up front (clear 409 Conflict) before provisioning.
+        if (await db.Organizations.IgnoreQueryFilters().AnyAsync(
+                o => !o.IsDeleted && o.Name.ToLower() == orgName.ToLower(), cancellationToken))
+        {
+            throw new ConflictException("An organization with this name already exists.");
+        }
+
         var orgs = sp.GetRequiredService<IOrganizationService>();
         var communities = sp.GetRequiredService<ICommunityService>();
         var users = sp.GetRequiredService<IUserService>();
         var userRoles = sp.GetRequiredService<IUserRoleService>();
 
-        // The CommunityAdmin role is seeded at startup (DevDataSeeder.EnsureCommunityAdminRoleAsync).
+        // The OrganizationAdmin (Society Admin) role is seeded at startup.
         var roleId = await db.Roles.IgnoreQueryFilters()
-            .Where(r => r.Name == CommunityAdminRoleName)
+            .Where(r => r.Name == OrgAdminRoleName)
             .Select(r => (Guid?)r.Id)
             .FirstOrDefaultAsync(cancellationToken)
-            ?? throw new ConflictException("Onboarding is not available: the CommunityAdmin role is not provisioned.");
+            ?? await db.Roles.IgnoreQueryFilters()
+                .Where(r => r.Name == CommunityAdminRoleName)
+                .Select(r => (Guid?)r.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new ConflictException("Onboarding is not available: administrative role is not provisioned.");
 
         // 1) Organization = the SOCIETY. Each WING becomes its own Community under it (the community
         //    id is the tenant discriminator). Wing names come from the request; fall back to the
@@ -243,28 +255,44 @@ public sealed class OnboardingService(
                 $"Floors × rooms-per-floor ({floors * roomsPerFloor}) exceeds the maximum of {maxUnits} units.");
         }
 
-        var units = sp.GetRequiredService<IUnitService>();
+        var db = sp.GetRequiredService<AppDbContext>();
         var pad = roomsPerFloor >= 100 ? 3 : 2;
         var prefix = string.IsNullOrWhiteSpace(wing) ? string.Empty : $"{wing.Trim()}-";
 
+        var unitList = new List<Unit>(floors * roomsPerFloor);
         for (var f = 1; f <= floors; f++)
         {
             var floorLabel = f.ToString(CultureInfo.InvariantCulture);
             for (var r = 1; r <= roomsPerFloor; r++)
             {
                 var unitNumber = $"{prefix}{floorLabel}{r.ToString(CultureInfo.InvariantCulture).PadLeft(pad, '0')}";
-                await units.CreateAsync(
-                    new CreateUnitRequest(
-                        communityId,
-                        HierarchyNodeId: null,
-                        UnitNumber: unitNumber,
-                        UnitType: "apartment",
-                        Area: null,
-                        Floor: floorLabel,
-                        Bedrooms: null,
-                        UnitStatus: UnitStatuses.Available,
-                        CustomAttributes: null),
-                    cancellationToken);
+                unitList.Add(new Unit
+                {
+                    CommunityId = communityId,
+                    HierarchyNodeId = null,
+                    UnitNumber = unitNumber,
+                    UnitType = "apartment",
+                    Area = null,
+                    Floor = floorLabel,
+                    Bedrooms = null,
+                    UnitStatus = UnitStatuses.Available,
+                    CustomAttributes = new Dictionary<string, string>()
+                });
+            }
+        }
+
+        if (unitList.Count > 0)
+        {
+            db.Units.AddRange(unitList);
+            await db.SaveChangesAsync(cancellationToken);
+
+            var cache = sp.GetService<App.Application.Abstractions.Caching.IAppCache>();
+            if (cache != null)
+            {
+                await cache.BumpGenerationAsync(
+                    App.Application.Abstractions.Caching.UnitsCacheKeys.CommunityGeneration(communityId), cancellationToken);
+                await cache.BumpGenerationAsync(
+                    App.Application.Abstractions.Caching.UnitsCacheKeys.SuperGeneration, cancellationToken);
             }
         }
     }

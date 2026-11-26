@@ -17,4 +17,7 @@ public class Organization : PlatformEntity
 
     /// <summary>Property / community type code (e.g. apartment_society, gated_community, villa_bungalow).</summary>
     public string? PropertyType { get; set; }
+
+    /// <summary>Whether this organization/society is active.</summary>
+    public bool IsActive { get; set; } = true;
 }

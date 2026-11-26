@@ -24,7 +24,8 @@ public sealed record ResidentDto(
     string? CommunityName = null,
     string? OrganizationName = null,
     string? RoleName = null,
-    IReadOnlyList<string>? Roles = null);
+    IReadOnlyList<string>? Roles = null,
+    Guid? OrganizationId = null);
 
 
 public sealed record HouseholdMemberDto(

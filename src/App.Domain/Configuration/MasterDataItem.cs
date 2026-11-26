@@ -25,10 +25,13 @@ public class MasterDataItem : PlatformEntity
     /// <summary>The list this entry belongs to (e.g. <c>Unit_Type</c>). Required.</summary>
     public string ListKey { get; set; } = string.Empty;
 
-    /// <summary>Platform-wide default entry or a per-community entry (Req 8.1).</summary>
+    /// <summary>Platform-wide default entry (0) or per-organization entry (2) (Req 8.1).</summary>
     public ConfigScope Scope { get; set; }
 
-    /// <summary>Owning community for a community-scoped entry; null for a platform default.</summary>
+    /// <summary>Owning organization (society) for an organization-scoped entry; null for a platform default.</summary>
+    public Guid? OrganizationId { get; set; }
+
+    /// <summary>Owning community (legacy, now wings). Replaced by OrganizationId.</summary>
     public Guid? CommunityId { get; set; }
 
     /// <summary>Stable machine code stored on referencing records (e.g. <c>apartment</c>). Required.</summary>

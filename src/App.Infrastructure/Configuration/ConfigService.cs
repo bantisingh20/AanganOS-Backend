@@ -254,6 +254,17 @@ public sealed class ConfigService(
             cancellationToken);
     }
 
+    public async Task<IReadOnlyList<string>> ListMasterDataKeysAsync(CancellationToken cancellationToken = default)
+    {
+        return await db.Set<MasterDataItem>()
+            .AsNoTracking()
+            .Where(m => !m.IsDeleted)
+            .Select(m => m.ListKey)
+            .Distinct()
+            .OrderBy(k => k)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<MasterDataEntry>> GetMasterDataAsync(
         string listKey, Guid? communityId = null, bool includeInactive = false, CancellationToken cancellationToken = default)
     {
@@ -265,21 +276,32 @@ public sealed class ConfigService(
             return cached;
         }
 
+        Guid? orgId = null;
+        if (communityId is { } cid)
+        {
+            orgId = await db.Communities.IgnoreQueryFilters().AsNoTracking()
+                .Where(c => c.Id == cid)
+                .Select(c => (Guid?)c.OrganizationId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+        }
+
         var rows = await db.Set<MasterDataItem>()
             .AsNoTracking()
             .Where(m => m.ListKey == listKey &&
-                        (m.CommunityId == null || (communityId != null && m.CommunityId == communityId)))
-            .Select(m => new { m.CommunityId, m.Code, m.Label, m.SortOrder, m.IsActive })
+                        ((m.OrganizationId == null && m.CommunityId == null) ||
+                         (orgId != null && m.OrganizationId == orgId) ||
+                         (communityId != null && m.CommunityId == communityId)))
+            .Select(m => new { m.OrganizationId, m.CommunityId, m.Code, m.Label, m.SortOrder, m.IsActive })
             .ToListAsync(CancellationToken.None);
 
-        // Merge platform defaults with community entries; a community entry overrides the platform
-        // entry with the same code (Req 8.1 fallback semantics at list-entry granularity).
-        var byCode = new Dictionary<string, MasterDataEntry>(StringComparer.Ordinal);
-        foreach (var r in rows.Where(r => r.CommunityId == null))
+        // Merge platform defaults with organization/community entries; an organization entry overrides
+        // the platform entry with the same code (Req 8.1 fallback semantics at list-entry granularity).
+        var byCode = new Dictionary<string, MasterDataEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in rows.Where(r => r.OrganizationId == null && r.CommunityId == null))
         {
             byCode[r.Code] = new MasterDataEntry(r.Code, r.Label, r.SortOrder, r.IsActive);
         }
-        foreach (var r in rows.Where(r => r.CommunityId == communityId && communityId != null))
+        foreach (var r in rows.Where(r => orgId != null && r.OrganizationId == orgId))
         {
             byCode[r.Code] = new MasterDataEntry(r.Code, r.Label, r.SortOrder, r.IsActive);
         }

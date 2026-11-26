@@ -27,6 +27,8 @@ public interface IConfigService
     Task DeleteConfigAsync(Guid id, CancellationToken cancellationToken = default);
 
 
+    Task<IReadOnlyList<string>> ListMasterDataKeysAsync(CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<MasterDataEntry>> GetMasterDataAsync(string listKey, Guid? communityId = null, bool includeInactive = false, CancellationToken cancellationToken = default);
 
 

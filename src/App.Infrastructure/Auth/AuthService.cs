@@ -80,17 +80,19 @@ public sealed class AuthService(
     {
         var now = clock.UtcNow;
 
-        var (communityIds, isSuperAdmin, roleNames, permissions) = await ResolveAuthorizationAsync(userId, cancellationToken);
+        var (user, communityIds, isSuperAdmin, roleNames, permissions) = await ResolveAuthorizationAsync(userId, cancellationToken);
 
-        var (isResidentSelfScoped, residentUnitId) = isSuperAdmin
-            ? (false, (Guid?)null)
-            : await ResolveResidentScopeAsync(userId, cancellationToken);
+        var (residentId, residentName, residentType, residentUnitId) = isSuperAdmin
+            ? ((Guid?)null, (string?)null, (string?)null, (Guid?)null)
+            : await ResolveResidentInfoAsync(userId, cancellationToken);
 
-        var organizationId = await ResolveOrganizationIdAsync(userId, communityIds, cancellationToken);
+        var isResidentSelfScoped = residentUnitId.HasValue;
 
-        var (residentId, residentType) = isSuperAdmin
-            ? ((Guid?)null, (string?)null)
-            : await ResolveResidentProfileAsync(userId, cancellationToken);
+        var organizationId = user.OrganizationId is { } uo && uo != Guid.Empty
+            ? uo
+            : await ResolveOrganizationIdAsync(userId, communityIds, cancellationToken);
+
+        await EnforceOrganizationActiveAsync(isSuperAdmin, organizationId, cancellationToken);
 
         await EnforceSubscriptionGateAsync(isSuperAdmin, roleNames, organizationId, cancellationToken);
 
@@ -119,58 +121,59 @@ public sealed class AuthService(
         await db.SaveChangesAsync(cancellationToken);
 
         var refreshToken = $"{session.Id:N}.{refreshSecret}";
-        var userDto = await BuildLoginUserAsync(userId, communityIds, roleNames, permissions, cancellationToken);
+        var userDto = await BuildLoginUserAsync(user, residentId, residentName, communityIds, organizationId, roleNames, permissions, cancellationToken);
         return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames, refreshToken, userDto);
     }
 
     private async Task<LoginUserDto> BuildLoginUserAsync(
-        Guid userId,
+        User user,
+        Guid? residentId,
+        string? residentName,
         IReadOnlyCollection<Guid> communityIds,
+        Guid? organizationId,
         IReadOnlyCollection<string> roleNames,
         IReadOnlyCollection<string> permissions,
         CancellationToken cancellationToken)
     {
-        var user = await db.Users.IgnoreQueryFilters().AsNoTracking()
-            .Where(u => u.Id == userId)
-            .Select(u => new { u.Name, u.Email, u.Phone })
-            .FirstOrDefaultAsync(cancellationToken);
-
-        var resident = await db.Residents.IgnoreQueryFilters().AsNoTracking()
-            .Where(r => r.UserId == userId && !r.IsDeleted)
-            .Select(r => new { r.Id, r.Name })
-            .FirstOrDefaultAsync(cancellationToken);
-
-        var name = !string.IsNullOrWhiteSpace(resident?.Name) ? resident!.Name.Trim()
-            : !string.IsNullOrWhiteSpace(user?.Name) ? user!.Name!.Trim()
+        var name = !string.IsNullOrWhiteSpace(residentName) ? residentName.Trim()
+            : !string.IsNullOrWhiteSpace(user?.Name) ? user.Name.Trim()
             : null;
 
         Guid? communityId = communityIds.Count > 0 ? communityIds.First() : null;
         string? communityName = null;
-        Guid? organizationId = null;
         string? organizationName = null;
+
         if (communityId is { } cid)
         {
-            var community = await db.Communities.IgnoreQueryFilters().AsNoTracking()
-                .Where(c => c.Id == cid)
-                .Select(c => new { c.Name, c.OrganizationId })
-                .FirstOrDefaultAsync(cancellationToken);
-            if (community is not null)
+            var commInfo = await (
+                from c in db.Communities.IgnoreQueryFilters().AsNoTracking()
+                where c.Id == cid
+                join o in db.Organizations.IgnoreQueryFilters().AsNoTracking() on c.OrganizationId equals o.Id into og
+                from o in og.DefaultIfEmpty()
+                select new { CommunityName = c.Name, OrganizationId = c.OrganizationId, OrganizationName = o.Name }
+            ).FirstOrDefaultAsync(cancellationToken);
+
+            if (commInfo != null)
             {
-                communityName = community.Name;
-                organizationId = community.OrganizationId;
-                organizationName = await db.Organizations.IgnoreQueryFilters().AsNoTracking()
-                    .Where(o => o.Id == community.OrganizationId)
-                    .Select(o => o.Name)
-                    .FirstOrDefaultAsync(cancellationToken);
+                communityName = commInfo.CommunityName;
+                organizationId ??= commInfo.OrganizationId;
+                organizationName = commInfo.OrganizationName;
             }
+        }
+        else if (organizationId is { } oid && oid != Guid.Empty)
+        {
+            organizationName = await db.Organizations.IgnoreQueryFilters().AsNoTracking()
+                .Where(o => o.Id == oid)
+                .Select(o => o.Name)
+                .FirstOrDefaultAsync(cancellationToken);
         }
 
         return new LoginUserDto(
-            userId,
+            user.Id,
             name,
-            string.IsNullOrWhiteSpace(user?.Email) ? null : user!.Email,
-            string.IsNullOrWhiteSpace(user?.Phone) ? null : user!.Phone,
-            resident?.Id,
+            string.IsNullOrWhiteSpace(user.Email) ? null : user.Email,
+            string.IsNullOrWhiteSpace(user.Phone) ? null : user.Phone,
+            residentId,
             communityId,
             communityName,
             organizationId,
@@ -212,16 +215,16 @@ public sealed class AuthService(
         }
 
         // Re-resolve current authorization/scope so a role/scope change takes effect on refresh.
-        var (communityIds, isSuperAdmin, roleNames, permissions) = await ResolveAuthorizationAsync(user.Id, cancellationToken);
-        var (isResidentSelfScoped, residentUnitId) = isSuperAdmin
-            ? (false, (Guid?)null)
-            : await ResolveResidentScopeAsync(user.Id, cancellationToken);
+        var (_, communityIds, isSuperAdmin, roleNames, permissions) = await ResolveAuthorizationAsync(user.Id, cancellationToken);
+        var (residentId, residentName, residentType, residentUnitId) = isSuperAdmin
+            ? ((Guid?)null, (string?)null, (string?)null, (Guid?)null)
+            : await ResolveResidentInfoAsync(user.Id, cancellationToken);
 
-        var organizationId = await ResolveOrganizationIdAsync(user.Id, communityIds, cancellationToken);
+        var isResidentSelfScoped = residentUnitId.HasValue;
 
-        var (residentId, residentType) = isSuperAdmin
-            ? ((Guid?)null, (string?)null)
-            : await ResolveResidentProfileAsync(user.Id, cancellationToken);
+        var organizationId = user.OrganizationId is { } uo && uo != Guid.Empty
+            ? uo
+            : await ResolveOrganizationIdAsync(user.Id, communityIds, cancellationToken);
 
         await EnforceSubscriptionGateAsync(isSuperAdmin, roleNames, organizationId, cancellationToken);
 
@@ -243,7 +246,7 @@ public sealed class AuthService(
         await db.SaveChangesAsync(cancellationToken);
 
         var refreshToken = $"{session.Id:N}.{newSecret}";
-        var userDto = await BuildLoginUserAsync(user.Id, communityIds, roleNames, permissions, cancellationToken);
+        var userDto = await BuildLoginUserAsync(user, residentId, residentName, communityIds, organizationId, roleNames, permissions, cancellationToken);
         return new LoginResult(issued.AccessToken, issued.ExpiresAtUtc, roleNames, refreshToken, userDto);
     }
 
@@ -642,34 +645,45 @@ public sealed class AuthService(
     }
 
 
-    private async Task<(bool IsSelfScoped, Guid? UnitId)> ResolveResidentScopeAsync(Guid userId, CancellationToken cancellationToken)
-    {
-        var unitId = await (
-            from r in db.Residents.AsNoTracking().IgnoreQueryFilters()
-            where r.UserId == userId && !r.IsDeleted
-            join hm in db.Set<HouseholdMember>().AsNoTracking().IgnoreQueryFilters()
-                on r.Id equals hm.ResidentId
-            where !hm.IsDeleted && hm.EndDate == null && hm.UnitId != null
-            orderby hm.StartDate
-            select hm.UnitId)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        return unitId is { } u ? (true, u) : (false, (Guid?)null);
-    }
-
-    /// <summary>
-    /// The user's Resident record (id + resident type, e.g. owner / tenant / security), put into the
-    /// token so <c>CurrentUser</c> has them without a DB read per request. (null, null) for admins/staff.
-    /// </summary>
-    private async Task<(Guid? ResidentId, string? ResidentType)> ResolveResidentProfileAsync(Guid userId, CancellationToken cancellationToken)
+    private async Task<(Guid? ResidentId, string? ResidentName, string? ResidentType, Guid? UnitId)>
+        ResolveResidentInfoAsync(Guid userId, CancellationToken cancellationToken)
     {
         var resident = await db.Residents.AsNoTracking().IgnoreQueryFilters()
             .Where(r => r.UserId == userId && !r.IsDeleted)
             .OrderBy(r => r.CreatedAtUtc)
-            .Select(r => new { r.Id, r.ResidentType })
+            .Select(r => new { r.Id, r.Name, r.ResidentType })
             .FirstOrDefaultAsync(cancellationToken);
 
-        return resident is null ? (null, null) : (resident.Id, resident.ResidentType);
+        if (resident is null) return (null, null, null, null);
+
+        var unitId = await db.Set<HouseholdMember>().AsNoTracking().IgnoreQueryFilters()
+            .Where(hm => hm.ResidentId == resident.Id && !hm.IsDeleted && hm.EndDate == null && hm.UnitId != null)
+            .OrderBy(hm => hm.StartDate)
+            .Select(hm => hm.UnitId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return (resident.Id, resident.Name, resident.ResidentType, unitId);
+    }
+
+    private async Task EnforceOrganizationActiveAsync(
+        bool isSuperAdmin,
+        Guid? organizationId,
+        CancellationToken cancellationToken)
+    {
+        if (isSuperAdmin || organizationId is not { } orgId)
+        {
+            return;
+        }
+
+        var org = await db.Organizations.IgnoreQueryFilters().AsNoTracking()
+            .Where(o => o.Id == orgId)
+            .Select(o => new { o.IsDeleted, o.IsActive })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (org is null || org.IsDeleted || !org.IsActive)
+        {
+            throw new ForbiddenException("Your society/organization is currently inactive or suspended. Please contact your administrator.");
+        }
     }
 
     private async Task EnforceSubscriptionGateAsync(
@@ -719,7 +733,7 @@ public sealed class AuthService(
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private async Task<(IReadOnlyCollection<Guid> CommunityIds, bool IsSuperAdmin, IReadOnlyCollection<string> RoleNames, IReadOnlyCollection<string> Permissions)>
+    private async Task<(User User, IReadOnlyCollection<Guid> CommunityIds, bool IsSuperAdmin, IReadOnlyCollection<string> RoleNames, IReadOnlyCollection<string> Permissions)>
         ResolveAuthorizationAsync(Guid userId, CancellationToken cancellationToken)
     {
         var user = await db.Users.AsNoTracking()
@@ -728,7 +742,7 @@ public sealed class AuthService(
 
         if (user is null || !user.RoleId.HasValue || user.Role is null)
         {
-            return (Array.Empty<Guid>(), false, Array.Empty<string>(), Array.Empty<string>());
+            throw new UnauthenticatedException("Invalid credentials.");
         }
 
         var communityList = new List<Guid>();
@@ -774,7 +788,7 @@ public sealed class AuthService(
             .Distinct()
             .ToArray();
 
-        return (communityIds, isSuperAdmin, roleNames, permissionCodes);
+        return (user, communityIds, isSuperAdmin, roleNames, permissionCodes);
     }
 }
 

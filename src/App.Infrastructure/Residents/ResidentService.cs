@@ -92,7 +92,7 @@ public sealed class ResidentService(
             Name = request.Name.Trim(),
             Email = request.Email?.Trim(),
             Phone = request.Phone?.Trim(),
-            ResidentType = request.ResidentType.Trim(),
+            ResidentType = request.ResidentType.Trim().ToLowerInvariant(),
             PhotoFileId = string.IsNullOrWhiteSpace(request.PhotoFileId) ? null : request.PhotoFileId.Trim(),
             VerificationStatus = createdByApprover
                 ? ResidentVerificationStatuses.Draft
@@ -125,7 +125,7 @@ public sealed class ResidentService(
         if (request.ResidentType is not null)
         {
             await RequireValidResidentTypeAsync(request.ResidentType, resident.CommunityId, cancellationToken);
-            resident.ResidentType = request.ResidentType.Trim();
+            resident.ResidentType = request.ResidentType.Trim().ToLowerInvariant();
         }
 
         var newEmail = request.UpdateEmail ? NormalizeContact(request.Email) : null;
@@ -248,6 +248,13 @@ public sealed class ResidentService(
         var names = await App.Infrastructure.Community.UnitService.ResolveCommunityOrgNamesAsync(
             db, paged.Items.Select(r => r.CommunityId), cancellationToken);
 
+        var commIds = paged.Items.Select(r => r.CommunityId).Distinct().ToList();
+        var commOrgMap = commIds.Count == 0
+            ? new Dictionary<Guid, Guid>()
+            : await db.Communities.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => commIds.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, c => c.OrganizationId, cancellationToken);
+
         var items = paged.Items
             .Select(r =>
             {
@@ -257,9 +264,12 @@ public sealed class ResidentService(
                 var withRoles = r.UserId is { } ruid && rolesById.TryGetValue(ruid, out var rl)
                     ? withStatus with { Roles = rl, RoleName = rl.FirstOrDefault() }
                     : withStatus;
-                return names.TryGetValue(r.CommunityId, out var n)
-                    ? withRoles with { CommunityName = n.Community, OrganizationName = n.Organization }
+                var withOrg = commOrgMap.TryGetValue(r.CommunityId, out var oId)
+                    ? withRoles with { OrganizationId = r.OrganizationId ?? oId }
                     : withRoles;
+                return names.TryGetValue(r.CommunityId, out var n)
+                    ? withOrg with { CommunityName = n.Community, OrganizationName = n.Organization }
+                    : withOrg;
             })
             .ToList();
 
@@ -396,17 +406,18 @@ public sealed class ResidentService(
         }
 
        
-        var resident = await db.Residents.AsNoTracking()
-            .FirstOrDefaultAsync(r => r.UserId == userId, cancellationToken);
+        var resident = await db.Residents.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(r => r.UserId == userId && !r.IsDeleted, cancellationToken);
         if (resident is null)
         {
             return new ResidentMeDto(null, []);
         }
        
         var units = await (
-            from h in db.HouseholdMembers.AsNoTracking()
-            where h.ResidentId == resident.Id && h.EndDate == null
-            join u in db.Units.AsNoTracking() on h.UnitId equals u.Id
+            from h in db.HouseholdMembers.AsNoTracking().IgnoreQueryFilters()
+            where h.ResidentId == resident.Id && h.EndDate == null && !h.IsDeleted
+            join u in db.Units.AsNoTracking().IgnoreQueryFilters() on h.UnitId equals u.Id
+            where !u.IsDeleted
             orderby h.StartDate
             select new ResidentHouseholdUnitDto(
                 u.Id, u.UnitNumber, u.UnitType, u.UnitStatus, u.Floor, u.CommunityId, h.Relationship, h.StartDate))
@@ -428,7 +439,8 @@ public sealed class ResidentService(
             throw new ForbiddenException("You must be signed in to update your presence.");
         }
 
-        var resident = await db.Residents.FirstOrDefaultAsync(r => r.UserId == userId, cancellationToken)
+        var resident = await db.Residents.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(r => r.UserId == userId && !r.IsDeleted, cancellationToken)
             ?? throw new NotFoundException("No resident profile is linked to your account.");
 
         resident.PresenceStatus = status;
@@ -457,7 +469,7 @@ public sealed class ResidentService(
         if (!string.IsNullOrWhiteSpace(request.ResidentType))
         {
             await RequireValidResidentTypeAsync(request.ResidentType.Trim(), resident.CommunityId, cancellationToken);
-            resident.ResidentType = request.ResidentType.Trim();
+            resident.ResidentType = request.ResidentType.Trim().ToLowerInvariant();
         }
         resident.DateOfBirth = request.DateOfBirth;
         resident.Gender = string.IsNullOrWhiteSpace(request.Gender) ? resident.Gender : request.Gender.Trim();
@@ -916,7 +928,8 @@ public sealed class ResidentService(
     private static ResidentDto ToDto(Resident r) =>
         new(r.Id, r.CommunityId, r.UserId, r.Name, r.Email, r.Phone, r.ResidentType,
             r.VerificationStatus, r.RejectionReason, r.IsDeleted, r.PresenceStatus, r.PhotoFileId,
-            r.DateOfBirth, r.Gender, r.MoveInDate, r.GovtIdType, r.GovtIdFrontFileId, r.GovtIdBackFileId);
+            r.DateOfBirth, r.Gender, r.MoveInDate, r.GovtIdType, r.GovtIdFrontFileId, r.GovtIdBackFileId,
+            OrganizationId: r.OrganizationId);
 
     private static HouseholdMemberDto ToDto(HouseholdMember h) =>
         // UnitId is non-null in practice (set on associate); default to Guid.Empty defensively.
@@ -991,15 +1004,18 @@ public sealed class ResidentService(
             throw new ValidationException("residentType", "A resident type is required.");
         }
 
-        if (string.Equals(residentType.Trim(), "security", StringComparison.OrdinalIgnoreCase))
+        var trimmed = residentType.Trim();
+        if (string.Equals(trimmed, "security", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "resident", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
         // Validate against the configurable Resident_Type list resolved for this community (Req 15.1)
-        // — not a frozen enum, so types stay editable per community.
+        // — not a frozen enum, so types stay editable per community. Case-insensitive by Code or Label.
         var allowed = await config.GetMasterDataAsync(MasterDataKeys.ResidentType, communityId, cancellationToken: cancellationToken);
-        if (!allowed.Any(e => string.Equals(e.Code, residentType.Trim(), StringComparison.Ordinal)))
+        if (!allowed.Any(e => string.Equals(e.Code, trimmed, StringComparison.OrdinalIgnoreCase) ||
+                              string.Equals(e.Label, trimmed, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ValidationException("residentType", $"'{residentType}' is not a valid resident type.");
         }

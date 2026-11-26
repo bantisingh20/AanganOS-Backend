@@ -41,9 +41,17 @@ public sealed class OrganizationService(
         ArgumentNullException.ThrowIfNull(request);
         RequireName(request.Name);
 
+        var trimmedName = request.Name.Trim();
+        var exists = await db.Organizations.IgnoreQueryFilters()
+            .AnyAsync(o => !o.IsDeleted && o.Name.ToLower() == trimmedName.ToLower(), cancellationToken);
+        if (exists)
+        {
+            throw new ConflictException("An organization with this name already exists.");
+        }
+
         var org = new Organization
         {
-            Name = request.Name.Trim(),
+            Name = trimmedName,
             PropertyType = string.IsNullOrWhiteSpace(request.PropertyType) ? null : request.PropertyType.Trim(),
         };
         db.Organizations.Add(org);
@@ -66,7 +74,14 @@ public sealed class OrganizationService(
         if (request.Name is not null)
         {
             RequireName(request.Name);
-            org.Name = request.Name.Trim();
+            var trimmedName = request.Name.Trim();
+            var exists = await db.Organizations.IgnoreQueryFilters()
+                .AnyAsync(o => o.Id != organizationId && !o.IsDeleted && o.Name.ToLower() == trimmedName.ToLower(), cancellationToken);
+            if (exists)
+            {
+                throw new ConflictException("An organization with this name already exists.");
+            }
+            org.Name = trimmedName;
         }
 
         if (request.PropertyType is not null)

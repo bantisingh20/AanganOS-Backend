@@ -115,6 +115,11 @@ public sealed class OrganizationEntityConfiguration : IEntityTypeConfiguration<O
 
         builder.Property(o => o.Name).IsRequired().HasMaxLength(200);
         builder.Property(o => o.PropertyType).HasMaxLength(100).IsRequired(false);
+
+        builder.HasIndex(o => o.Name)
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0")
+            .HasDatabaseName("UX_Organizations_Name");
     }
 }
 
