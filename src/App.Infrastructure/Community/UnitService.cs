@@ -109,7 +109,7 @@ public sealed class UnitService(
 
         await InvalidateCommunityAsync(unit.CommunityId, cancellationToken);
 
-        return ToDto(unit);
+        return await WithCommunityCodeAsync(ToDto(unit), cancellationToken);
     }
 
     public async Task<UnitDto> UpdateAsync(Guid unitId, UpdateUnitRequest request, CancellationToken cancellationToken = default)
@@ -180,7 +180,7 @@ public sealed class UnitService(
 
         await InvalidateCommunityAsync(unit.CommunityId, cancellationToken);
 
-        return ToDto(unit);
+        return await WithCommunityCodeAsync(ToDto(unit), cancellationToken);
     }
 
     public async Task DeleteAsync(Guid unitId, CancellationToken cancellationToken = default)
@@ -209,7 +209,7 @@ public sealed class UnitService(
         }
 
         var unit = await q.FirstOrDefaultAsync(u => u.Id == unitId, cancellationToken);
-        return unit is null ? null : ToDto(unit);
+        return unit is null ? null : await WithCommunityCodeAsync(ToDto(unit), cancellationToken);
     }
 
     public async Task<PagedData<UnitDto>> ListAsync(ListQueryParameters parameters, bool availableForOwner = false, Guid? organizationId = null, CancellationToken cancellationToken = default)
@@ -250,6 +250,7 @@ public sealed class UnitService(
 
         var names = await ResolveCommunityOrgNamesAsync(
             db, paged.Items.Select(u => u.CommunityId), cancellationToken);
+        var codes = await ResolveCommunityCodesAsync(db, paged.Items.Select(u => u.CommunityId), cancellationToken);
 
         return new PagedData<UnitDto>
         {
@@ -257,6 +258,7 @@ public sealed class UnitService(
                 .Select(u => names.TryGetValue(u.CommunityId, out var n)
                     ? u with { CommunityName = n.Community, OrganizationName = n.Organization }
                     : u)
+                .Select(u => u with { CommunityCode = codes.GetValueOrDefault(u.CommunityId) })
                 .ToList(),
             Page = paged.Page,
             PageSize = paged.PageSize,
@@ -283,6 +285,27 @@ public sealed class UnitService(
             .ToListAsync(cancellationToken);
 
         return rows.ToDictionary(r => r.Id, r => (r.Community, r.Organization));
+    }
+
+    /// <summary>Community id → wing code (only communities that have one).</summary>
+    internal static async Task<Dictionary<Guid, string>> ResolveCommunityCodesAsync(
+        AppDbContext db, IEnumerable<Guid> communityIds, CancellationToken cancellationToken)
+    {
+        var ids = communityIds.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        return await db.Communities.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => ids.Contains(c.Id) && c.Code != null)
+            .ToDictionaryAsync(c => c.Id, c => c.Code!, cancellationToken);
+    }
+
+    private async Task<UnitDto> WithCommunityCodeAsync(UnitDto dto, CancellationToken cancellationToken)
+    {
+        var codes = await ResolveCommunityCodesAsync(db, [dto.CommunityId], cancellationToken);
+        return dto with { CommunityCode = codes.GetValueOrDefault(dto.CommunityId) };
     }
 
     // --- units list cache: per-tenant-scope + per-param key, per-community generation invalidation ---

@@ -23,6 +23,7 @@ public sealed class CommunityEntityConfiguration : IEntityTypeConfiguration<Doma
 
         builder.Property(c => c.Name).IsRequired().HasMaxLength(200);
         builder.Property(c => c.CommunityType).HasMaxLength(100).IsRequired(false);
+        builder.Property(c => c.Code).HasMaxLength(20).IsRequired(false);
 
         // "Which communities belong to this organization?" lookups.
         builder.HasIndex(c => c.OrganizationId)

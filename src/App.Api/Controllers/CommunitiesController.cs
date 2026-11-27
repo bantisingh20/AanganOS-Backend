@@ -21,7 +21,7 @@ public sealed class CommunitiesController(ICommunityService communities) : Contr
     public async Task<IActionResult> Create([FromBody] CreateCommunityBody body, CancellationToken ct)
     {
         var dto = await communities.CreateAsync(
-            new CreateCommunityRequest(body.OrganizationId, body.Name!, body.CommunityType), ct);
+            new CreateCommunityRequest(body.OrganizationId, body.Name!, body.CommunityType, body.Code), ct);
         return Ok(ApiResult<CommunityDto>.Ok(dto, string.Empty));
     }
 
@@ -73,7 +73,7 @@ public sealed class CommunitiesController(ICommunityService communities) : Contr
     [RequirePermission(PermissionAction.Edit, "Community")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateCommunityBody body, CancellationToken ct)
     {
-        var dto = await communities.UpdateAsync(id, new UpdateCommunityRequest(body.Name, body.CommunityType), ct);
+        var dto = await communities.UpdateAsync(id, new UpdateCommunityRequest(body.Name, body.CommunityType, body.Code), ct);
         return Ok(ApiResult<CommunityDto>.Ok(dto, string.Empty));
     }
 
@@ -97,6 +97,9 @@ public sealed class CommunitiesController(ICommunityService communities) : Contr
 
         [MaxLength(100)]
         public string? CommunityType { get; init; }
+
+        [MaxLength(20)]
+        public string? Code { get; init; }
     }
 
     public sealed class UpdateCommunityBody
@@ -106,5 +109,8 @@ public sealed class CommunitiesController(ICommunityService communities) : Contr
 
         [MaxLength(100)]
         public string? CommunityType { get; init; }
+
+        [MaxLength(20)]
+        public string? Code { get; init; }
     }
 }

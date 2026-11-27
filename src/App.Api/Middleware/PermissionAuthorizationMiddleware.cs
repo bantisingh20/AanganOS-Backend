@@ -6,7 +6,10 @@ using App.Application.Exceptions;
 namespace App.Api.Middleware;
 
 
-public sealed class PermissionAuthorizationMiddleware(RequestDelegate next)
+public sealed class PermissionAuthorizationMiddleware(
+    RequestDelegate next,
+    PermissionEnforcementOptions options,
+    ILogger<PermissionAuthorizationMiddleware> logger)
 {
     private readonly RequestDelegate _next = next;
 
@@ -29,17 +32,28 @@ public sealed class PermissionAuthorizationMiddleware(RequestDelegate next)
             throw new UnauthenticatedException();
         }
 
-        // Permission (RBAC) checks disabled: role-based access is managed in the client layer.
-        // Authentication is still enforced above. To re-enable, uncomment the block below.
-        // var permitted = await permissionEvaluator.IsPermittedAsync(
-        //     currentUser, requirement.Value, context.RequestAborted);
-        //
-        // if (!permitted)
-        // {
-        //     throw new ForbiddenException();
-        // }
-        _ = currentUser;
-        _ = permissionEvaluator;
+        // RBAC: the caller's role must hold the (Action, ResourceType) the endpoint declares.
+        // Super admin bypasses inside the evaluator. Switch: Security:EnforcePermissions
+        // (false = audit only: log the would-be denial and let the request through).
+        var permitted = await permissionEvaluator.IsPermittedAsync(
+            currentUser, requirement.Value, context.RequestAborted);
+
+        if (!permitted)
+        {
+            if (options.EnforcePermissions)
+            {
+                logger.LogInformation(
+                    "[RBAC] Denied {Action}:{Resource} for user {UserId} (roles {Roles}) on {Method} {Path}",
+                    requirement.Value.Action, requirement.Value.ResourceType, currentUser.UserId,
+                    string.Join(",", currentUser.Roles), context.Request.Method, context.Request.Path);
+                throw new ForbiddenException();
+            }
+
+            logger.LogWarning(
+                "[RBAC audit] would deny {Action}:{Resource} for user {UserId} (roles {Roles}) on {Method} {Path}",
+                requirement.Value.Action, requirement.Value.ResourceType, currentUser.UserId,
+                string.Join(",", currentUser.Roles), context.Request.Method, context.Request.Path);
+        }
 
         await _next(context);
     }

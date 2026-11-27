@@ -36,6 +36,12 @@ public class Community : TenantOwnedEntity
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
+    /// Optional short code for the wing / tower, e.g. <c>A</c> for "A Wing". Unique within the
+    /// organization. The UI shows units as <c>{Code}-{UnitNumber}</c> (e.g. A-101).
+    /// </summary>
+    public string? Code { get; set; }
+
+    /// <summary>
     /// Optional community-type code (property type is now stored at the Organization / Society level).
     /// </summary>
     public string? CommunityType { get; set; }

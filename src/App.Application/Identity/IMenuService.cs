@@ -3,12 +3,16 @@ using App.Domain.Identity;
 
 namespace App.Application.Identity;
 
+/// <summary>Sidebar / tile node. PermissionResource + PermissionActions let the clients resolve a page's rights
+/// from its route (the DB menu row) instead of hard-coding permission keys in each page.</summary>
 public sealed record MenuNodeDto(
     string Key,
     string Label,
     string? Icon,
     string? Route,
-    IReadOnlyList<MenuNodeDto> Children);
+    IReadOnlyList<MenuNodeDto> Children,
+    string? PermissionResource = null,
+    IReadOnlyList<int>? PermissionActions = null);
 
 public sealed record MenuItemDto(
     Guid Id,

@@ -43,7 +43,7 @@ public interface IResidentOnboardingService
 }
 
 /// <summary>Minimal public community row for the onboarding search (no org/internal fields).</summary>
-public sealed record PublicCommunityDto(Guid Id, string Name, string? CommunityType = null);
+public sealed record PublicCommunityDto(Guid Id, string Name, string? CommunityType = null, string? Code = null);
 public sealed record PublicSocietytDto(Guid Id, string Name, string? PropertyType = null);
 
 /// <summary>A wing/block node for the onboarding picker.</summary>

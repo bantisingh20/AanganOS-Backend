@@ -86,16 +86,95 @@ public sealed class AuthController(IAuthService auth, CurrentUser currentUser) :
         return Ok(ApiResult<ChangePasswordResponse>.Ok(new ChangePasswordResponse(true), string.Empty));
     }
 
-    /// <summary>The logged-in person's details, straight from <see cref="CurrentUser"/>.</summary>
+    /// <summary>
+    /// The logged-in person's details, straight from <see cref="CurrentUser"/>.
+    /// With <c>?include=bootstrap</c> it also returns, in ONE call, what both apps need right after
+    /// login / on app start: menu, unread count, task summary, resident profile, app version and the
+    /// requested master-data lists (<c>&amp;masterData=Ticket_Status,Ticket_Category</c>, max 10).
+    /// Each section is loaded independently — if one fails it comes back null and the rest still return.
+    /// Only data about the caller is included (no lists guarded by per-feature permissions).
+    /// </summary>
     [HttpGet("me")]
-    public IActionResult Me()
+    public async Task<IActionResult> Me(
+        [FromQuery] string? include,
+        [FromQuery] string? platform,
+        [FromQuery] string? masterData,
+        [FromServices] IServiceProvider services,
+        CancellationToken ct)
     {
         if (!currentUser.IsAuthenticated)
         {
             throw new UnauthenticatedException();
         }
 
-        var me = new MeResponse(
+        var me = BuildMe();
+        if (!string.Equals(include, "bootstrap", StringComparison.OrdinalIgnoreCase))
+        {
+            return Ok(ApiResult<MeResponse>.Ok(me, string.Empty));
+        }
+
+        var log = services.GetRequiredService<ILogger<AuthController>>();
+        async Task<T?> Section<T>(string name, Func<Task<T>> load) where T : class
+        {
+            try { return await load(); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                log.LogWarning(ex, "Bootstrap section {Section} failed", name);
+                return null;
+            }
+        }
+
+        // Sequential on purpose: these services share one scoped DbContext.
+        var menu = await Section("menu", () => services.GetRequiredService<App.Application.Identity.IMenuService>().GetMenuAsync(ct));
+        var unread = await Section("unread", async () => (object)await services.GetRequiredService<App.Application.Notifications.INotificationInboxService>().UnreadCountAsync(ct));
+        var tasks = await Section("tasks", () => services.GetRequiredService<App.Application.MyTasks.IMyTasksService>().GetSummaryAsync(ct));
+
+        App.Application.Residents.ResidentMeDto? resident = null;
+        var guard = services.GetRequiredService<IAuthorizationGuard>();
+        if (currentUser.ResidentId is not null
+            && await guard.HasPermissionAsync(App.Domain.Identity.PermissionAction.View, "Resident", ct))
+        {
+            resident = await Section("resident", () => services.GetRequiredService<App.Application.Residents.IResidentService>().GetMeAsync(ct));
+        }
+
+        var config = services.GetRequiredService<App.Application.Config.IConfigService>();
+        var appVersion = string.IsNullOrWhiteSpace(platform)
+            ? null
+            : await Section("appVersion", () => AppVersionController.ReadAsync(config, platform, ct));
+
+        var lists = new Dictionary<string, IReadOnlyList<App.Application.Config.MasterDataEntry>>(StringComparer.Ordinal);
+        foreach (var key in (masterData ?? string.Empty)
+                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                     .Distinct(StringComparer.Ordinal)
+                     .Take(10))
+        {
+            var entries = await Section($"masterData:{key}", () => config.GetMasterDataAsync(key, null, false, ct));
+            if (entries is not null) lists[key] = entries;
+        }
+
+        var bootstrap = new BootstrapResponse(
+            me,
+            menu,
+            unread is int n ? n : null,
+            tasks,
+            resident,
+            appVersion,
+            lists);
+        return Ok(ApiResult<BootstrapResponse>.Ok(bootstrap, string.Empty));
+    }
+
+    public sealed record BootstrapResponse(
+        MeResponse Me,
+        IReadOnlyList<App.Application.Identity.MenuNodeDto>? Menu,
+        int? UnreadCount,
+        IReadOnlyList<App.Application.MyTasks.MyTaskSummaryItem>? Tasks,
+        App.Application.Residents.ResidentMeDto? Resident,
+        AppVersionController.AppVersionInfo? AppVersion,
+        IReadOnlyDictionary<string, IReadOnlyList<App.Application.Config.MasterDataEntry>> MasterData);
+
+    private MeResponse BuildMe()
+    {
+        return new MeResponse(
             currentUser.UserId,
             currentUser.CommunityId,
             currentUser.UnitId,
@@ -106,7 +185,6 @@ public sealed class AuthController(IAuthService auth, CurrentUser currentUser) :
             currentUser.Roles,
             currentUser.IsSuperAdmin,
             currentUser.IsResident);
-        return Ok(ApiResult<MeResponse>.Ok(me, string.Empty));
     }
 
     public sealed record MeResponse(

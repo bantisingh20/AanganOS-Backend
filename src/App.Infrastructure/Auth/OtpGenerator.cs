@@ -1,26 +1,42 @@
 using System.Security.Cryptography;
 using App.Application.Auth;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace App.Infrastructure.Auth;
 
-public sealed class OtpGenerator(IOptions<AuthOptions> options, IHostEnvironment environment) : IOtpGenerator
+/// <summary>
+/// Issues OTP codes. A fixed test OTP (Auth:DefaultOtp) is used ONLY when the environment is
+/// Development AND Auth:UseDefaultOtp is true. Anywhere else the setting is ignored (with a warning),
+/// so a copied config can never turn on a login bypass in production.
+/// </summary>
+public sealed class OtpGenerator : IOtpGenerator
 {
-    private readonly AuthOptions _auth = options.Value;
-    private readonly bool _isDevelopment = environment.IsDevelopment();
+    private readonly string? _fixedOtp;
 
-    public OtpResult Generate(int length)
+    public OtpGenerator(IOptions<AuthOptions> options, IHostEnvironment environment, ILogger<OtpGenerator> logger)
     {
-        var defaultOtp = _auth.DefaultOtp?.Trim();
-
-        if (!string.IsNullOrEmpty(defaultOtp) && (_isDevelopment || _auth.UseDefaultOtp))
+        var auth = options.Value;
+        var defaultOtp = auth.DefaultOtp?.Trim();
+        if (auth.UseDefaultOtp && !string.IsNullOrEmpty(defaultOtp))
         {
-            return new OtpResult(defaultOtp, true);
+            if (environment.IsDevelopment())
+            {
+                _fixedOtp = defaultOtp;
+                logger.LogWarning("Auth:UseDefaultOtp is ON (Development) — every OTP is the fixed test code.");
+            }
+            else
+            {
+                logger.LogWarning("Auth:UseDefaultOtp is set in {Environment}; ignored. Fixed OTPs are allowed only in Development.", environment.EnvironmentName);
+            }
         }
-
-        return new OtpResult(GenerateNumericCode(length), false);
     }
+
+    public OtpResult Generate(int length) =>
+        _fixedOtp is not null
+            ? new OtpResult(_fixedOtp, true)
+            : new OtpResult(GenerateNumericCode(length), false);
 
     private static string GenerateNumericCode(int length)
     {

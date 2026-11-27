@@ -25,7 +25,8 @@ public sealed record UnitDto(
     IReadOnlyDictionary<string, string> CustomAttributes,
     bool IsArchived,
     string? CommunityName = null,
-    string? OrganizationName = null);
+    string? OrganizationName = null,
+    string? CommunityCode = null);
 
 /// <summary>
 /// Create a unit (Req 14.1). <paramref name="UnitType"/>/<paramref name="UnitStatus"/> are validated

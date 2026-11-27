@@ -116,7 +116,7 @@ public sealed class OnboardingService(
         {
             var wingCommunityName = FormatWingName(wing);
             var wingCommunity = await communities.CreateAsync(
-                new CreateCommunityRequest(org.Id, wingCommunityName, commType), cancellationToken);
+                new CreateCommunityRequest(org.Id, wingCommunityName, commType, Code: wing.Length <= 20 ? wing : null), cancellationToken);
             createdCommunities.Add((wingCommunity.Id, wingCommunity.Name));
 
             await GenerateUnitsAsync(sp, wingCommunity.Id, wing, request.Floors, request.RoomsPerFloor, cancellationToken);

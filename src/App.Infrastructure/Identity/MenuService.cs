@@ -193,7 +193,7 @@ public sealed class MenuService(
                 {
                     continue;
                 }
-                nodes.Add(new MenuNodeDto(m.Key, m.Label, m.Icon, m.Route, children));
+                nodes.Add(new MenuNodeDto(m.Key, m.Label, m.Icon, m.Route, children, m.RequiredPermissionResource, ParseActions(m.RequiredPermissionActions)));
             }
             return nodes;
         }

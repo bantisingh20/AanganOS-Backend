@@ -1,3 +1,4 @@
+using App.Application.Abstractions.Caching;
 using App.Application.Audit;
 using App.Application.Community;
 using App.Application.Config;
@@ -34,7 +35,8 @@ public sealed class CommunityService(
     IAuditService audit,
     IConfigService config,
     IPageSizePolicy pageSizePolicy,
-    IAsyncQueryExecutor executor)
+    IAsyncQueryExecutor executor,
+    IAppCache cache)
     : ICommunityService
 {
     // Allow-list: client-facing fields a caller may sort/filter/search on (Req 12.4). No arbitrary
@@ -46,7 +48,9 @@ public sealed class CommunityService(
             .Sortable("communityType", c => c.CommunityType)
             .Filterable("communityType", c => c.CommunityType)
             .Filterable("organizationId", c => c.OrganizationId)
-            .Searchable(c => c.Name);
+            .Sortable("code", c => c.Code)
+            .Searchable(c => c.Name)
+            .Searchable(c => c.Code);
 
     public async Task<CommunityDto> CreateAsync(CreateCommunityRequest request, CancellationToken cancellationToken = default)
     {
@@ -57,11 +61,14 @@ public sealed class CommunityService(
             await RequireValidCommunityTypeAsync(request.CommunityType, cancellationToken);
         }
         await RequireOrganizationExistsAsync(request.OrganizationId, cancellationToken);
+        var code = NormalizeCode(request.Code);
+        await RequireCodeAvailableAsync(request.OrganizationId, code, exceptCommunityId: null, cancellationToken);
 
         var community = new CommunityEntity
         {
             OrganizationId = request.OrganizationId,
             Name = request.Name.Trim(),
+            Code = code,
             CommunityType = string.IsNullOrWhiteSpace(request.CommunityType) ? "apartment_society" : request.CommunityType.Trim(),
         };
         // The tenant discriminator for a community IS its own id (Req 12.1): all child data will
@@ -104,7 +111,23 @@ public sealed class CommunityService(
             }
         }
 
+        var codeChanged = false;
+        if (request.Code is not null)
+        {
+            var code = NormalizeCode(request.Code);
+            await RequireCodeAvailableAsync(community.OrganizationId, code, community.Id, cancellationToken);
+            codeChanged = community.Code != code;
+            community.Code = code;
+        }
+
         await db.SaveChangesAsync(cancellationToken);
+
+        if (codeChanged)
+        {
+            // Unit lists carry the community code (A-101); drop cached pages so the new code shows now.
+            await cache.BumpGenerationAsync(UnitsCacheKeys.CommunityGeneration(community.Id), cancellationToken);
+            await cache.BumpGenerationAsync(UnitsCacheKeys.SuperGeneration, cancellationToken);
+        }
 
         await audit.AppendAsync(
             new AuditEntry("Update", "Community", community.Id.ToString(), community.Id, Detail: null),
@@ -168,7 +191,41 @@ public sealed class CommunityService(
     }
 
     private static CommunityDto ToDto(CommunityEntity c) =>
-        new(c.Id, c.OrganizationId, c.Name, c.CommunityType, c.IsDeleted);
+        new(c.Id, c.OrganizationId, c.Name, c.CommunityType, c.IsDeleted, Code: c.Code);
+
+    /// <summary>Trims the wing code; blank means "no code".</summary>
+    private static string? NormalizeCode(string? code)
+    {
+        var trimmed = code?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return null;
+        }
+        if (trimmed.Length > 20)
+        {
+            throw new ValidationException("code", "The code can be at most 20 characters.");
+        }
+        return trimmed;
+    }
+
+    /// <summary>Two wings of the same organization may not share a code (A-101 must be unambiguous).</summary>
+    private async Task RequireCodeAvailableAsync(Guid organizationId, string? code, Guid? exceptCommunityId, CancellationToken cancellationToken)
+    {
+        if (code is null)
+        {
+            return;
+        }
+
+        var taken = await db.Communities.AsNoTracking().IgnoreQueryFilters()
+            .AnyAsync(c => c.OrganizationId == organizationId
+                && !c.IsDeleted
+                && c.Code == code
+                && (exceptCommunityId == null || c.Id != exceptCommunityId), cancellationToken);
+        if (taken)
+        {
+            throw new ValidationException("code", $"Another community in this organization already uses the code '{code}'.");
+        }
+    }
 
     private static void RequireName(string? name)
     {

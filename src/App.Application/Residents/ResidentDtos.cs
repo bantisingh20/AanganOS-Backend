@@ -55,7 +55,8 @@ public sealed record ResidentHouseholdUnitDto(
     string? Floor,
     Guid CommunityId,
     string Relationship,
-    DateTime StartDate);
+    DateTime StartDate,
+    string? CommunityCode = null);
 
 
 public sealed record ResidentMeDto(

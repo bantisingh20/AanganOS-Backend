@@ -389,9 +389,11 @@ public sealed class ResidentService(
             from h in db.HouseholdMembers.AsNoTracking()
             where h.ResidentId == residentId && h.EndDate == null
             join u in db.Units.AsNoTracking() on h.UnitId equals u.Id
+            join c in db.Communities.AsNoTracking().IgnoreQueryFilters() on u.CommunityId equals c.Id into cj
+            from c in cj.DefaultIfEmpty()
             orderby h.StartDate
             select new ResidentHouseholdUnitDto(
-                u.Id, u.UnitNumber, u.UnitType, u.UnitStatus, u.Floor, u.CommunityId, h.Relationship, h.StartDate))
+                u.Id, u.UnitNumber, u.UnitType, u.UnitStatus, u.Floor, u.CommunityId, h.Relationship, h.StartDate, c != null ? c.Code : null))
             .ToListAsync(cancellationToken);
 
         return units;
@@ -418,9 +420,11 @@ public sealed class ResidentService(
             where h.ResidentId == resident.Id && h.EndDate == null && !h.IsDeleted
             join u in db.Units.AsNoTracking().IgnoreQueryFilters() on h.UnitId equals u.Id
             where !u.IsDeleted
+            join c in db.Communities.AsNoTracking().IgnoreQueryFilters() on u.CommunityId equals c.Id into cj
+            from c in cj.DefaultIfEmpty()
             orderby h.StartDate
             select new ResidentHouseholdUnitDto(
-                u.Id, u.UnitNumber, u.UnitType, u.UnitStatus, u.Floor, u.CommunityId, h.Relationship, h.StartDate))
+                u.Id, u.UnitNumber, u.UnitType, u.UnitStatus, u.Floor, u.CommunityId, h.Relationship, h.StartDate, c != null ? c.Code : null))
             .ToListAsync(cancellationToken);
 
         return new ResidentMeDto(ToDto(resident), units);

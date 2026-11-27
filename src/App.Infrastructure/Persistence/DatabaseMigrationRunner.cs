@@ -11,11 +11,52 @@ public static class DatabaseMigrationRunner
 {
     private static readonly Regex GoRegex = new(@"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
+    /// <summary>
+    /// Runs schema sync + pending SQL scripts under a database-wide lock (sp_getapplock), so when
+    /// several API instances start together only one migrates; the others wait, then find nothing
+    /// pending. The lock is owned by this connection's session and released in <c>finally</c>.
+    /// </summary>
     public static async Task RunPendingMigrationsAsync(
         AppDbContext db,
         ILogger logger,
         string? scriptsDirectory = null,
         CancellationToken cancellationToken = default)
+    {
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open)
+        {
+            await conn.OpenAsync(cancellationToken);
+        }
+
+        // Wait up to 10 minutes for another instance's migration to finish.
+        await db.Database.ExecuteSqlRawAsync(
+            "DECLARE @r int; EXEC @r = sp_getapplock @Resource = N'AanganOS.DbMigrations', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 600000; " +
+            "IF @r < 0 THROW 51000, 'Could not acquire the database migration lock.', 1;",
+            cancellationToken);
+        try
+        {
+            await RunPendingMigrationsLockedAsync(db, logger, scriptsDirectory, cancellationToken);
+        }
+        finally
+        {
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(
+                    "EXEC sp_releaseapplock @Resource = N'AanganOS.DbMigrations', @LockOwner = 'Session';",
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[DatabaseMigrations] Could not release the migration lock (it is freed when the connection closes).");
+            }
+        }
+    }
+
+    private static async Task RunPendingMigrationsLockedAsync(
+        AppDbContext db,
+        ILogger logger,
+        string? scriptsDirectory,
+        CancellationToken cancellationToken)
     {
         // 0. Automatically sync schema (tables, missing columns, indexes) from C# Entities
         await AutoSyncSchemaAsync(db, logger, cancellationToken);
@@ -85,7 +126,9 @@ public static class DatabaseMigrationRunner
                 using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
                 foreach (var batch in batches)
                 {
-                    await db.Database.ExecuteSqlRawAsync(batch, cancellationToken);
+                    // ExecuteSqlRaw treats { } as parameter placeholders ({0}); scripts pass no
+                    // parameters, so escape them or a brace in a comment/string breaks startup.
+                    await db.Database.ExecuteSqlRawAsync(EscapeBraces(batch), cancellationToken);
                 }
 
                 sw.Stop();
@@ -293,6 +336,9 @@ public static class DatabaseMigrationRunner
             },
             cancellationToken);
     }
+
+    /// <summary>Doubles { and } so ExecuteSqlRaw sends the script text unchanged.</summary>
+    internal static string EscapeBraces(string sql) => sql.Replace("{", "{{").Replace("}", "}}");
 
     private static string? ResolveScriptsDirectory(string? preferred)
     {

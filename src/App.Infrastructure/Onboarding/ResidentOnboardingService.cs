@@ -73,7 +73,7 @@ public sealed class ResidentOnboardingService(
         if (term.Length > 0) q = q.Where(c => c.Name.Contains(term));
         return await q.OrderBy(c => c.Name)
             .Take(MaxSearchResults)
-            .Select(c => new PublicCommunityDto(c.Id, c.Name, c.CommunityType))
+            .Select(c => new PublicCommunityDto(c.Id, c.Name, c.CommunityType, c.Code))
             .ToListAsync(cancellationToken);
     }
 

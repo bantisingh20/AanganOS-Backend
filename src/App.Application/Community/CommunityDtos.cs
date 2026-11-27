@@ -12,7 +12,8 @@ public sealed record CommunityDto(
     string Name,
     string? CommunityType,
     bool IsArchived,
-    string? OrganizationName = null);
+    string? OrganizationName = null,
+    string? Code = null);
 
 /// <summary>
 /// Create a community (Req 12.1) — a platform super-admin action. The generated id becomes the
@@ -21,9 +22,11 @@ public sealed record CommunityDto(
 /// <param name="OrganizationId">Owning organization. Required.</param>
 /// <param name="Name">Community name. Required.</param>
 /// <param name="CommunityType">Optional community-type code.</param>
-public sealed record CreateCommunityRequest(Guid OrganizationId, string Name, string? CommunityType = null);
+/// <param name="Code">Optional short wing/tower code (e.g. "A"); unique within the organization.</param>
+public sealed record CreateCommunityRequest(Guid OrganizationId, string Name, string? CommunityType = null, string? Code = null);
 
 /// <summary>Edit a community. Null fields are left unchanged.</summary>
 /// <param name="Name">New name, or null to leave unchanged.</param>
 /// <param name="CommunityType">New community-type code, or null to leave unchanged.</param>
-public sealed record UpdateCommunityRequest(string? Name, string? CommunityType = null);
+/// <param name="Code">New wing/tower code, null to leave unchanged, empty string to clear.</param>
+public sealed record UpdateCommunityRequest(string? Name, string? CommunityType = null, string? Code = null);

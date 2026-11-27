@@ -62,8 +62,16 @@ builder.AddObservability();
 
 builder.Services.AddApiRateLimiting(builder.Configuration);
 
+// Server-side RBAC switch for [RequirePermission] endpoints (Security:EnforcePermissions).
+var permissionEnforcement = PermissionEnforcementOptions.FromConfiguration(builder.Configuration, builder.Environment);
+builder.Services.AddSingleton(permissionEnforcement);
+
 const string CorsPolicy = "AdminPortal";
 var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+// Only the admin website needs CORS (the Android app calls the API natively through CapacitorHttp).
+// Production must list the admin site's origin, e.g. env var Cors__AllowedOrigins__0=https://admin.example.com
+// or appsettings.Production.json. Localhost-only origins outside Development mean the admin site is blocked.
+var corsLocalOnly = corsOrigins.All(o => o.Contains("localhost", StringComparison.OrdinalIgnoreCase) || o.Contains("127.0.0.1", StringComparison.Ordinal));
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(CorsPolicy, policy =>
@@ -78,9 +86,22 @@ builder.Services.AddCors(options =>
     });
 });
 
-builder.Services.AddHostedService<ApiWalkInExpiryService>();
 
 var app = builder.Build();
+
+if (!app.Environment.IsDevelopment() && corsLocalOnly)
+{
+    app.Logger.LogWarning("CORS allows only localhost origins in {Environment}; the admin website will be blocked. Set Cors:AllowedOrigins (e.g. Cors__AllowedOrigins__0).", app.Environment.EnvironmentName);
+}
+
+if (permissionEnforcement.EnforcePermissions)
+{
+    app.Logger.LogInformation("Security:EnforcePermissions = true in {Environment}: [RequirePermission] endpoints return 403 without a matching role grant.", app.Environment.EnvironmentName);
+}
+else
+{
+    app.Logger.LogWarning("Security:EnforcePermissions = false in {Environment}: RBAC is AUDIT ONLY. Denials are logged as '[RBAC audit] would deny' but requests are allowed.", app.Environment.EnvironmentName);
+}
 
 app.UseExceptionEnvelope();
 
@@ -108,7 +129,11 @@ app.MapControllers();
 
 app.MapObservabilityEndpoints();
 
-app.MapPipelineDemoEndpoints();
+// Demo endpoints (/pipeline-demo/*) are for local testing only.
+if (app.Environment.IsDevelopment())
+{
+    app.MapPipelineDemoEndpoints();
+}
 
 using (var scope = app.Services.CreateScope())
 {
